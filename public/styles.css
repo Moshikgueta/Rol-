@@ -480,3 +480,21 @@ textarea.input { height: auto; padding: 14px 18px; resize: none; }
   font-size: 13px; font-weight: 700;
 }
 .chip-user .follow.on { background: rgba(255,255,255,.25); }
+
+/* ---------- Login por telefone ---------- */
+.auth-step { display: none; }
+.auth-step.active { display: flex; }
+.auth-title { font-size: 24px; font-weight: 800; text-align: center; }
+.tiny { font-size: 11px; opacity: .85; }
+.phone-input { display: flex; gap: 8px; }
+.phone-input .ddi {
+  display: grid; place-items: center; flex-shrink: 0;
+  height: 56px; padding: 0 14px; border-radius: 18px;
+  background: rgba(255,255,255,.25); font-weight: 700;
+}
+.code-input { text-align: center; font-size: 30px; letter-spacing: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.auth-links { display: flex; justify-content: space-between; }
+.link-light { color: var(--white); font-weight: 700; font-size: 15px; padding: 8px 4px; text-decoration: underline; text-underline-offset: 3px; }
+.link-light:disabled { opacity: .6; text-decoration: none; cursor: default; }
+.welcome-actions .link-light { align-self: center; }
+.dev-code { background: rgba(0,0,0,.18); border-radius: 14px; padding: 10px; text-align: center; font-size: 14px; }

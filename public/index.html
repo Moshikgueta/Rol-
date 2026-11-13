@@ -23,22 +23,52 @@
     <div class="welcome-actions">
       <button class="btn btn-dark" data-action="discover">Descubra</button>
       <button class="btn btn-white" data-action="signup">Criar Nova Conta</button>
+      <button class="link-light" data-action="login">Já tenho conta · Entrar</button>
     </div>
   </section>
 
-  <!-- ============ CRIAR CONTA ============ -->
+  <!-- ============ ENTRAR / CRIAR CONTA (telefone) ============ -->
   <section id="screen-signup" class="screen screen-yellow">
-    <button class="round-btn back" data-action="back" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
+    <button class="round-btn back" data-action="auth-back" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
     <h2 class="brand brand-sm">ROLÊ</h2>
-    <form id="signup-form" class="signup-form">
+
+    <!-- Passo 1: telefone -->
+    <form id="phone-form" class="signup-form auth-step active">
+      <h3 class="auth-title">Qual é o seu celular?</h3>
+      <p class="small center">Vamos enviar um código por SMS para confirmar que é você.</p>
+      <div class="phone-input">
+        <span class="ddi">🇧🇷 +55</span>
+        <input id="phone-input" class="input" type="tel" inputmode="numeric" autocomplete="tel-national" required
+               placeholder="(41) 99999-9999" maxlength="16" aria-label="Celular com DDD" />
+      </div>
+      <button type="submit" class="btn btn-white" id="phone-submit">Receber código por SMS</button>
+      <p class="tiny center">Ao continuar, você concorda em receber um SMS. Podem ser cobradas tarifas da operadora.</p>
+    </form>
+
+    <!-- Passo 2: código -->
+    <form id="code-form" class="signup-form auth-step">
+      <h3 class="auth-title">Digite o código</h3>
+      <p class="small center">Enviamos um código de 6 números para <b id="code-phone"></b>.</p>
+      <input id="code-input" class="input code-input" type="text" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]{6}" maxlength="6" required placeholder="••••••" aria-label="Código de 6 números" />
+      <p id="dev-code" class="dev-code hidden"></p>
+      <button type="submit" class="btn btn-white" id="code-submit">Confirmar</button>
+      <div class="auth-links">
+        <button type="button" id="resend-btn" class="link-light" disabled>Reenviar código</button>
+        <button type="button" data-action="auth-change-phone" class="link-light">Trocar número</button>
+      </div>
+    </form>
+
+    <!-- Passo 3: perfil (só para número novo) -->
+    <form id="signup-form" class="signup-form auth-step">
+      <h3 class="auth-title">Crie seu perfil</h3>
       <label class="avatar-picker">
         <input type="file" id="signup-photo" accept="image/*" hidden />
         <span id="signup-avatar" class="avatar avatar-xl"><svg><use href="#i-camera"/></svg></span>
         <span class="small">Adicionar foto</span>
       </label>
       <input id="signup-name" class="input" type="text" required maxlength="40" placeholder="Seu nome" autocomplete="name" />
-      <div class="input-prefix"><span>@</span><input id="signup-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]+" placeholder="usuario" autocapitalize="off" /></div>
-      <p class="small center">É instantâneo: sem e-mail, sem senha. Seus dados ficam neste aparelho.</p>
+      <div class="input-prefix"><span>@</span><input id="signup-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]{2,20}" placeholder="usuario" autocapitalize="off" /></div>
       <button type="submit" class="btn btn-white">Criar Nova Conta</button>
     </form>
   </section>
@@ -119,6 +149,7 @@
       <span id="member-avatar" class="avatar avatar-xl"></span>
       <h2 id="member-name"></h2>
       <p id="member-handle" class="muted"></p>
+      <p id="member-phone" class="muted small"></p>
       <div class="stats">
         <div><b id="stat-checkins">0</b><span>check-ins</span></div>
         <div><b id="stat-likes">0</b><span>curtidas</span></div>
@@ -149,6 +180,7 @@
         <button data-action="edit-profile">Editar perfil</button>
         <button data-action="notifications">Notificações</button>
         <button data-action="logout" class="danger">Sair da conta</button>
+        <button data-action="logout-all" class="danger">Sair de todos os aparelhos</button>
       </div>
     </div>
   </section>
@@ -170,7 +202,7 @@
         <button data-action="notifications"><svg><use href="#i-bell"/></svg> Notificações</button>
         <button data-action="checkin"><svg><use href="#i-plus"/></svg> Fazer check-in</button>
       </nav>
-      <button id="drawer-auth" class="btn btn-yellow" data-action="signup">Criar Nova Conta</button>
+      <button id="drawer-auth" class="btn btn-yellow" data-action="login">Entrar com celular</button>
     </div>
   </div>
 

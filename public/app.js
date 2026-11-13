@@ -192,8 +192,8 @@
     if (state.user) return true;
     pendingAfterSignup = then || null;
     closeSheets(); closeDrawer();
-    toast("Crie sua conta para continuar — leva 5 segundos.");
-    show("screen-signup");
+    toast("Entre com seu celular para continuar.");
+    startAuth();
     return false;
   }
 
@@ -682,6 +682,7 @@
     setAvatar($("#member-avatar"), u);
     $("#member-name").textContent = u.name;
     $("#member-handle").textContent = "@" + u.handle;
+    $("#member-phone").textContent = u.phone ? formatPhone(u.phone) : "";
     syncLiveUI();
     try {
       const s = await api("/me/summary");
@@ -746,7 +747,7 @@
   // ---------------- Eventos ----------------
   const actions = {
     discover: () => show("screen-map"),
-    signup: () => { closeDrawer(); show("screen-signup"); },
+    signup: startAuth,
     back,
     "back-map": () => show("screen-map"),
     menu: openDrawer,
@@ -786,13 +787,20 @@
     "live-stop": () => { stopLive(); closeSheets(); },
     "live-link": shareLiveLink,
     "edit-profile": openProfileEdit,
-    logout: () => {
-      if (!confirm("Sair da conta? Como a conta não tem senha, você não conseguirá entrar nela de novo neste ou em outro aparelho.")) return;
-      stopLive(true);
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(LIVE_KEY);
-      location.href = "/";
+    logout: async () => {
+      if (!confirm("Sair da conta neste aparelho? Para entrar de novo, é só usar o mesmo celular.")) return;
+      await signOut("/auth/session");
     },
+    "logout-all": async () => {
+      if (!confirm("Sair da conta em todos os aparelhos?")) return;
+      await signOut("/auth/sessions");
+    },
+    login: startAuth,
+    "auth-back": () => {
+      if (authStep === "phone") back();
+      else setAuthStep("phone");
+    },
+    "auth-change-phone": () => setAuthStep("phone"),
   };
 
   document.addEventListener("click", async (e) => {
@@ -904,12 +912,12 @@
   });
   $("#signup-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const btn = e.submitter || $("#signup-form button[type=submit]");
+    const btn = $("#signup-form button[type=submit]");
     btn.disabled = true;
     try {
       const { user, token } = await api("/users", {
         method: "POST",
-        body: { name: $("#signup-name").value.trim(), handle: normalizeHandle($("#signup-handle").value) },
+        body: { signupTicket: auth.ticket, name: $("#signup-name").value.trim(), handle: normalizeHandle($("#signup-handle").value) },
       });
       state.token = token;
       localStorage.setItem(TOKEN_KEY, token);
@@ -920,20 +928,136 @@
           finalUser = (await api("/me", { method: "PATCH", body: { avatar } })).user;
         } catch { toast("Conta criada, mas a foto não foi enviada. Tente em Editar perfil."); }
       }
-      setSession(finalUser);
-      state.history = [];
-      show("screen-map");
-      toast(`Conta criada! Bem-vindo, @${finalUser.handle}`);
-      const next = pendingAfterSignup;
-      pendingAfterSignup = null;
-      if (next === "checkin") setTimeout(openCheckin, 300);
-      else if (next === "live") setTimeout(openLiveSettings, 300);
-      else if (next === "member") show("screen-member");
+      finishAuth(finalUser, `Conta criada! Bem-vindo, @${finalUser.handle}`);
     } catch (err) {
       toast(err.message);
+      if (err.status === 401) setAuthStep("phone");
     }
     btn.disabled = false;
   });
+
+  // ---------------- Login por telefone ----------------
+  const auth = { phone: null, ticket: null, resendAt: 0 };
+  let authStep = "phone";
+
+  function startAuth() {
+    closeDrawer(); closeSheets();
+    setAuthStep("phone");
+    show("screen-signup");
+    setTimeout(() => $("#phone-input").focus(), 100);
+  }
+  function setAuthStep(step) {
+    authStep = step;
+    const ids = { phone: "phone-form", code: "code-form", profile: "signup-form" };
+    $$(".auth-step").forEach((f) => f.classList.toggle("active", f.id === ids[step]));
+    if (step === "code") { $("#code-input").value = ""; setTimeout(() => $("#code-input").focus(), 100); }
+  }
+
+  // (41) 99999-9999
+  function maskPhone(v) {
+    const d = v.replace(/\D/g, "").slice(0, 11);
+    if (d.length <= 2) return d ? `(${d}` : "";
+    if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  }
+  function formatPhone(e164) {
+    if (e164.startsWith("+55")) return "+55 " + maskPhone(e164.slice(3));
+    return e164;
+  }
+
+  $("#phone-input").addEventListener("input", (e) => { e.target.value = maskPhone(e.target.value); });
+
+  async function requestCode() {
+    const digits = $("#phone-input").value.replace(/\D/g, "");
+    if (digits.length !== 11) { toast("Digite o celular com DDD: 11 números."); return false; }
+    const btn = $("#phone-submit");
+    btn.disabled = true;
+    btn.textContent = "Enviando...";
+    try {
+      const r = await api("/auth/send", { method: "POST", body: { phone: digits } });
+      auth.phone = r.phone;
+      auth.resendAt = Date.now() + (r.resendIn || 60) * 1000;
+      $("#code-phone").textContent = formatPhone(r.phone);
+      const dev = $("#dev-code");
+      dev.classList.toggle("hidden", !r.devCode);
+      dev.textContent = r.devCode ? `Modo de teste (sem SMS): seu código é ${r.devCode}` : "";
+      setAuthStep("code");
+      return true;
+    } catch (err) {
+      toast(err.message);
+      if (err.status === 429 && authStep === "code") auth.resendAt = Date.now() + 60000;
+      return false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Receber código por SMS";
+    }
+  }
+  $("#phone-form").addEventListener("submit", (e) => { e.preventDefault(); requestCode(); });
+  $("#resend-btn").addEventListener("click", async () => {
+    if (Date.now() < auth.resendAt) return;
+    if (await requestCode()) toast("Enviamos um novo código.");
+  });
+  setInterval(() => {
+    const btn = $("#resend-btn");
+    const left = Math.ceil((auth.resendAt - Date.now()) / 1000);
+    btn.disabled = left > 0;
+    btn.textContent = left > 0 ? `Reenviar em ${left}s` : "Reenviar código";
+  }, 500);
+
+  let verifying = false;
+  async function verifyCode() {
+    const code = $("#code-input").value.replace(/\D/g, "");
+    if (code.length !== 6 || verifying) return;
+    verifying = true;
+    const btn = $("#code-submit");
+    btn.disabled = true;
+    btn.textContent = "Conferindo...";
+    try {
+      const r = await api("/auth/verify", { method: "POST", body: { phone: auth.phone, code } });
+      if (r.token) {
+        state.token = r.token;
+        localStorage.setItem(TOKEN_KEY, r.token);
+        finishAuth(r.user, `Que bom te ver de novo, @${r.user.handle}!`);
+      } else {
+        auth.ticket = r.signupTicket;
+        setAuthStep("profile");
+        setTimeout(() => $("#signup-name").focus(), 100);
+      }
+    } catch (err) {
+      toast(err.message);
+      $("#code-input").select();
+    } finally {
+      verifying = false;
+      btn.disabled = false;
+      btn.textContent = "Confirmar";
+    }
+  }
+  $("#code-input").addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
+    if (e.target.value.length === 6) verifyCode(); // confirma sozinho ao completar
+  });
+  $("#code-form").addEventListener("submit", (e) => { e.preventDefault(); verifyCode(); });
+
+  function finishAuth(user, message) {
+    auth.ticket = null;
+    setSession(user);
+    state.history = [];
+    show("screen-map");
+    toast(message);
+    const next = pendingAfterSignup;
+    pendingAfterSignup = null;
+    if (next === "checkin") setTimeout(openCheckin, 300);
+    else if (next === "live") setTimeout(openLiveSettings, 300);
+    else if (next === "member") show("screen-member");
+  }
+
+  async function signOut(path) {
+    stopLive(true);
+    try { await api(path, { method: "DELETE" }); } catch { /* sai localmente mesmo assim */ }
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(LIVE_KEY);
+    location.href = "/";
+  }
 
   // Editar perfil
   $("#profile-photo").addEventListener("change", async (e) => {

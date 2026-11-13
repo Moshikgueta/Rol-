@@ -1,5 +1,7 @@
 // Rolê — API (Cloudflare Workers + D1 + R2 + Durable Objects)
 export { LiveHub } from "./live.js";
+import { HttpError, json, sha256, randomToken } from "./util.js";
+import { normalizePhone, sendCode, checkCode } from "./otp.js";
 
 const MIN = 60 * 1000;
 const DURATIONS = [60, 180, 360];
@@ -8,22 +10,7 @@ const IMAGE_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "we
 const HANDLE_RE = /^[a-z0-9_.]{2,20}$/;
 
 // ---------------- Utilidades ----------------
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
-const json = (data, status = 200, headers = {}) =>
-  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
-
 const uid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-
-function randomToken() {
-  const b = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-async function sha256(s) {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
-}
 
 async function body(req) {
   try { return await req.json(); } catch { throw new HttpError(400, "JSON inválido."); }
@@ -52,16 +39,30 @@ function ownMediaUrl(url, user, { optional = false } = {}) {
 }
 
 const publicUser = (u) => u && { id: u.id, name: u.name, handle: u.handle, avatar: u.avatar_url };
+// Dados que só a própria pessoa vê
+const selfUser = (u) => u && { ...publicUser(u), phone: u.phone };
+
+function bearer(req) {
+  const auth = req.headers.get("authorization") || "";
+  return auth.startsWith("Bearer ") ? auth.slice(7) : new URL(req.url).searchParams.get("token");
+}
 
 async function authUser(req, env, { required = true } = {}) {
-  const auth = req.headers.get("authorization") || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : new URL(req.url).searchParams.get("token");
+  const token = bearer(req);
   if (token) {
-    const u = await env.DB.prepare("SELECT * FROM users WHERE token_hash = ?").bind(await sha256(token)).first();
+    const u = await env.DB.prepare("SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?")
+      .bind(await sha256(token)).first();
     if (u) return u;
   }
   if (required) throw new HttpError(401, "Faça login para continuar.");
   return null;
+}
+
+async function createSession(env, userId) {
+  const token = randomToken();
+  await env.DB.prepare("INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)")
+    .bind(await sha256(token), userId, Date.now()).run();
+  return token;
 }
 
 async function notify(env, userId, actorId, text, postId = null) {
@@ -134,25 +135,70 @@ const route = (method, pattern, handler) => {
   routes.push({ method, re, keys, handler, wildcard: pattern.endsWith("*") });
 };
 
-// Conta instantânea: sem e-mail e sem senha; devolve um token guardado no aparelho.
-route("POST", "/api/users", async (req, env) => {
-  const b = await body(req);
-  const name = str(b.name, "nome", { min: 1, max: 40 });
-  const handle = normalizeHandle(b.handle);
-  const token = randomToken();
-  const user = { id: uid("u"), name, handle, avatar_url: null };
-  try {
-    await env.DB.prepare("INSERT INTO users (id, name, handle, avatar_url, token_hash, created_at) VALUES (?, ?, ?, NULL, ?, ?)")
-      .bind(user.id, name, handle, await sha256(token), Date.now()).run();
-  } catch (e) {
-    if (String(e.message).includes("UNIQUE")) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
-    throw e;
-  }
-  await notify(env, user.id, null, `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`);
-  return json({ user: publicUser(user), token }, 201);
+// ---- Login por telefone ----
+// 1) POST /api/auth/send   { phone }        -> envia o código por SMS
+// 2) POST /api/auth/verify { phone, code }  -> conta existente: { token, user }
+//                                            -> número novo: { signupTicket }
+// 3) POST /api/users { signupTicket, name, handle } -> cria a conta: { token, user }
+route("POST", "/api/auth/send", async (req, env) => {
+  const phone = normalizePhone((await body(req)).phone);
+  const ip = req.headers.get("cf-connecting-ip");
+  const { devCode } = await sendCode(env, phone, ip);
+  return json({ phone, resendIn: 60, ...(devCode ? { devCode } : {}) });
 });
 
-route("GET", "/api/me", async (req, env) => json({ user: publicUser(await authUser(req, env)) }));
+route("POST", "/api/auth/verify", async (req, env) => {
+  const b = await body(req);
+  const phone = normalizePhone(b.phone);
+  await checkCode(env, phone, String(b.code || "").trim());
+  const user = await env.DB.prepare("SELECT * FROM users WHERE phone = ?").bind(phone).first();
+  if (user) return json({ token: await createSession(env, user.id), user: selfUser(user) });
+  const ticket = randomToken();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM signup_tickets WHERE expires_at < ?").bind(Date.now()),
+    env.DB.prepare("INSERT INTO signup_tickets (token_hash, phone, expires_at) VALUES (?, ?, ?)")
+      .bind(await sha256(ticket), phone, Date.now() + 15 * MIN),
+  ]);
+  return json({ signupTicket: ticket, phone });
+});
+
+route("DELETE", "/api/auth/session", async (req, env) => {
+  const token = bearer(req);
+  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256(token)).run();
+  return json({ ok: true });
+});
+
+route("DELETE", "/api/auth/sessions", async (req, env) => {
+  const me = await authUser(req, env);
+  await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(me.id).run();
+  return json({ ok: true });
+});
+
+route("POST", "/api/users", async (req, env) => {
+  const b = await body(req);
+  const ticketHash = await sha256(String(b.signupTicket || ""));
+  const ticket = await env.DB.prepare("SELECT phone FROM signup_tickets WHERE token_hash = ? AND expires_at > ?")
+    .bind(ticketHash, Date.now()).first();
+  if (!ticket) throw new HttpError(401, "Confirme seu telefone de novo para criar a conta.");
+  const name = str(b.name, "nome", { min: 1, max: 40 });
+  const handle = normalizeHandle(b.handle);
+  const user = { id: uid("u"), name, handle, avatar_url: null, phone: ticket.phone };
+  try {
+    // users.token_hash é legado (antes do login por telefone); guardamos um valor aleatório.
+    await env.DB.prepare("INSERT INTO users (id, name, handle, avatar_url, token_hash, phone, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?)")
+      .bind(user.id, name, handle, "legacy-" + randomToken(), user.phone, Date.now()).run();
+  } catch (e) {
+    const m = String(e.message);
+    if (m.includes("users.handle")) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
+    if (m.includes("phone")) throw new HttpError(409, "Este telefone já tem conta. Entre com ele.");
+    throw e;
+  }
+  await env.DB.prepare("DELETE FROM signup_tickets WHERE token_hash = ?").bind(ticketHash).run();
+  await notify(env, user.id, null, `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`);
+  return json({ user: selfUser(user), token: await createSession(env, user.id) }, 201);
+});
+
+route("GET", "/api/me", async (req, env) => json({ user: selfUser(await authUser(req, env)) }));
 
 route("PATCH", "/api/me", async (req, env) => {
   const me = await authUser(req, env);
@@ -166,7 +212,7 @@ route("PATCH", "/api/me", async (req, env) => {
     if (String(e.message).includes("UNIQUE")) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
     throw e;
   }
-  return json({ user: publicUser({ ...me, name, handle, avatar_url: avatar }) });
+  return json({ user: selfUser({ ...me, name, handle, avatar_url: avatar }) });
 });
 
 route("GET", "/api/me/summary", async (req, env) => {
@@ -184,7 +230,7 @@ route("GET", "/api/me/summary", async (req, env) => {
   ]);
   const s = stats.results[0];
   return json({
-    user: publicUser(me),
+    user: selfUser(me),
     stats: { checkins: s.checkins, likesReceived: s.likes_received, comments: s.comments, following: s.following, followers: s.followers },
     posts: mine.results.map((r) => shapePost(r, me)),
     liked: liked.results.map((r) => shapePost(r, me)),
@@ -360,7 +406,10 @@ export default {
       }
       throw new HttpError(404, "Rota não encontrada.");
     } catch (e) {
-      if (e instanceof HttpError) return json({ error: e.message }, e.status);
+      if (e instanceof HttpError) {
+        const headers = e.extra.retryAfter ? { "retry-after": String(e.extra.retryAfter) } : {};
+        return json({ error: e.message, ...e.extra }, e.status, headers);
+      }
       console.error(e);
       return json({ error: "Erro interno. Tente novamente." }, 500);
     }
