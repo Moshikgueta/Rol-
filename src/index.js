@@ -1,7 +1,7 @@
 // Rolê — API (Cloudflare Workers + D1 + R2 + Durable Objects)
 export { LiveHub } from "./live.js";
 import { HttpError, json, sha256, randomToken } from "./util.js";
-import { normalizePhone, sendCode, checkCode } from "./otp.js";
+import { normalizePhone, sendCode, checkCode, availableChannels } from "./otp.js";
 
 const MIN = 60 * 1000;
 const DURATIONS = [60, 180, 360];
@@ -136,15 +136,20 @@ const route = (method, pattern, handler) => {
 };
 
 // ---- Login por telefone ----
-// 1) POST /api/auth/send   { phone }        -> envia o código por SMS
+// 0) GET  /api/auth/channels               -> { sms, whatsapp } disponíveis
+// 1) POST /api/auth/send   { phone, channel } -> envia o código por SMS ou WhatsApp
 // 2) POST /api/auth/verify { phone, code }  -> conta existente: { token, user }
 //                                            -> número novo: { signupTicket }
 // 3) POST /api/users { signupTicket, name, handle } -> cria a conta: { token, user }
+route("GET", "/api/auth/channels", async (req, env) => json(availableChannels(env)));
+
 route("POST", "/api/auth/send", async (req, env) => {
-  const phone = normalizePhone((await body(req)).phone);
+  const b = await body(req);
+  const phone = normalizePhone(b.phone);
+  const channel = b.channel === "whatsapp" ? "whatsapp" : "sms";
   const ip = req.headers.get("cf-connecting-ip");
-  const { devCode } = await sendCode(env, phone, ip);
-  return json({ phone, resendIn: 60, ...(devCode ? { devCode } : {}) });
+  const { devCode } = await sendCode(env, phone, ip, channel);
+  return json({ phone, channel, resendIn: 60, ...(devCode ? { devCode } : {}) });
 });
 
 route("POST", "/api/auth/verify", async (req, env) => {

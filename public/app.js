@@ -937,7 +937,14 @@
   });
 
   // ---------------- Login por telefone ----------------
-  const auth = { phone: null, ticket: null, resendAt: 0 };
+  const auth = { phone: null, ticket: null, resendAt: 0, channel: "sms", channels: { sms: true, whatsapp: false } };
+  const CHANNEL_TEXT = { sms: "por SMS", whatsapp: "pelo WhatsApp" };
+
+  // Mostra o botão do WhatsApp só quando o servidor tem o WhatsApp configurado.
+  api("/auth/channels").then((c) => {
+    auth.channels = c;
+    $("#phone-submit-wa").classList.toggle("hidden", !c.whatsapp);
+  }).catch(() => {});
   let authStep = "phone";
 
   function startAuth() {
@@ -967,20 +974,29 @@
 
   $("#phone-input").addEventListener("input", (e) => { e.target.value = maskPhone(e.target.value); });
 
-  async function requestCode() {
+  async function requestCode(channel = auth.channel) {
     const digits = $("#phone-input").value.replace(/\D/g, "");
     if (digits.length !== 11) { toast("Digite o celular com DDD: 11 números."); return false; }
-    const btn = $("#phone-submit");
-    btn.disabled = true;
-    btn.textContent = "Enviando...";
+    const btns = $$("#phone-form [data-channel]");
+    const labels = btns.map((b) => b.innerHTML);
+    btns.forEach((b) => (b.disabled = true));
+    const active = btns.find((b) => b.dataset.channel === channel);
+    if (active) active.textContent = "Enviando...";
     try {
-      const r = await api("/auth/send", { method: "POST", body: { phone: digits } });
+      const r = await api("/auth/send", { method: "POST", body: { phone: digits, channel } });
       auth.phone = r.phone;
+      auth.channel = r.channel || channel;
+      $("#code-channel").textContent = CHANNEL_TEXT[auth.channel];
+      const other = auth.channel === "sms" ? "whatsapp" : "sms";
+      const sw = $("#switch-channel");
+      sw.dataset.channel = other;
+      sw.textContent = other === "whatsapp" ? "Receber pelo WhatsApp" : "Receber por SMS";
+      sw.classList.toggle("hidden", !auth.channels[other]);
       auth.resendAt = Date.now() + (r.resendIn || 60) * 1000;
       $("#code-phone").textContent = formatPhone(r.phone);
       const dev = $("#dev-code");
       dev.classList.toggle("hidden", !r.devCode);
-      dev.textContent = r.devCode ? `Modo de teste (sem SMS): seu código é ${r.devCode}` : "";
+      dev.textContent = r.devCode ? `Modo de teste (nada é enviado): seu código é ${r.devCode}` : "";
       setAuthStep("code");
       return true;
     } catch (err) {
@@ -988,14 +1004,24 @@
       if (err.status === 429 && authStep === "code") auth.resendAt = Date.now() + 60000;
       return false;
     } finally {
-      btn.disabled = false;
-      btn.textContent = "Receber código por SMS";
+      btns.forEach((b, i) => { b.disabled = false; b.innerHTML = labels[i]; });
     }
   }
-  $("#phone-form").addEventListener("submit", (e) => { e.preventDefault(); requestCode(); });
+  $("#phone-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    requestCode(e.submitter && e.submitter.dataset.channel === "whatsapp" ? "whatsapp" : "sms");
+  });
   $("#resend-btn").addEventListener("click", async () => {
     if (Date.now() < auth.resendAt) return;
-    if (await requestCode()) toast("Enviamos um novo código.");
+    if (await requestCode()) toast(`Enviamos um novo código ${CHANNEL_TEXT[auth.channel]}.`);
+  });
+  $("#switch-channel").addEventListener("click", async (e) => {
+    const channel = e.currentTarget.dataset.channel;
+    if (Date.now() < auth.resendAt) {
+      toast(`Espere ${Math.ceil((auth.resendAt - Date.now()) / 1000)}s para pedir o código ${CHANNEL_TEXT[channel]}.`);
+      return;
+    }
+    if (await requestCode(channel)) toast(`Enviamos o código ${CHANNEL_TEXT[channel]}.`);
   });
   setInterval(() => {
     const btn = $("#resend-btn");

@@ -2,6 +2,8 @@
 //
 // Produção: Twilio Verify (o Twilio gera, entrega e confere o código).
 //   Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SID
+//   WhatsApp: crie um remetente de WhatsApp no Twilio, ligue-o ao serviço Verify
+//   e defina a variável WHATSAPP_ENABLED="true". Sem isso, só SMS aparece no app.
 // Desenvolvimento: OTP_DEV_MODE="true" em .dev.vars. O código é gerado aqui,
 //   aparece no terminal e é devolvido para o app mostrar na tela. Nenhum SMS é enviado.
 
@@ -35,6 +37,13 @@ export function normalizePhone(input) {
 export const isDevMode = (env) => env.OTP_DEV_MODE === "true";
 const hasTwilio = (env) => env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SID;
 
+/** Canais de envio disponíveis neste servidor. */
+export function availableChannels(env) {
+  const ready = isDevMode(env) || hasTwilio(env);
+  return { sms: !!ready, whatsapp: !!ready && (isDevMode(env) || env.WHATSAPP_ENABLED === "true") };
+}
+const CHANNEL_LABEL = { sms: "SMS", whatsapp: "WhatsApp" };
+
 async function enforceLimits(env, phone, ip) {
   const now = Date.now();
   for (const l of LIMITS) {
@@ -66,11 +75,13 @@ async function twilio(env, path, params) {
   return { ok: res.ok, status: res.status, data };
 }
 
-/** Envia o código. Devolve { devCode } apenas no modo de desenvolvimento. */
-export async function sendCode(env, phone, ip) {
+/** Envia o código por "sms" ou "whatsapp". Devolve { devCode } apenas no modo de desenvolvimento. */
+export async function sendCode(env, phone, ip, channel = "sms") {
   if (!isDevMode(env) && !hasTwilio(env)) {
     throw new HttpError(503, "O envio de SMS ainda não foi configurado no servidor.");
   }
+  if (!["sms", "whatsapp"].includes(channel)) throw new HttpError(400, "Forma de envio inválida.");
+  if (!availableChannels(env)[channel]) throw new HttpError(400, "O envio pelo WhatsApp ainda não está disponível. Use SMS.");
   await enforceLimits(env, phone, ip);
 
   if (isDevMode(env)) {
@@ -78,13 +89,16 @@ export async function sendCode(env, phone, ip) {
     await env.DB.prepare(`INSERT INTO otp_codes (phone, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0)
         ON CONFLICT(phone) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0`)
       .bind(phone, await sha256(phone + ":" + code), Date.now() + CODE_TTL_MS).run();
-    console.log(`[OTP modo dev] código para ${phone}: ${code}`);
+    console.log(`[OTP modo dev] código para ${phone} (${CHANNEL_LABEL[channel]}): ${code}`);
     return { devCode: code };
   }
 
-  const r = await twilio(env, "Verifications", { To: phone, Channel: "sms", Locale: "pt-BR" });
+  const r = await twilio(env, "Verifications", { To: phone, Channel: channel, Locale: "pt-BR" });
   if (!r.ok) {
-    console.error("Twilio Verify (envio):", r.status, JSON.stringify(r.data));
+    console.error(`Twilio Verify (envio ${channel}):`, r.status, JSON.stringify(r.data));
+    if (channel === "whatsapp" && r.data.code !== 60203) {
+      throw new HttpError(400, "Não conseguimos enviar pelo WhatsApp. Confira se este número tem WhatsApp ou tente por SMS.");
+    }
     if (r.data.code === 60200 || r.data.code === 21608 || r.data.code === 21614) throw new HttpError(400, "Não conseguimos enviar SMS para este número.");
     if (r.data.code === 60203) throw new HttpError(429, "Muitos códigos pedidos para este número. Tente mais tarde.");
     throw new HttpError(502, "Não foi possível enviar o SMS agora. Tente de novo.");

@@ -9,7 +9,7 @@ App web (mobile-first) com backend na **Cloudflare**:
 | Banco de dados (usuários, posts, curtidas, comentários, amigos, notificações) | D1 (SQLite) |
 | Fotos dos rolês e avatares | R2 |
 | Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
-| Login por celular (código por SMS) | Twilio Verify (`src/otp.js`) |
+| Login por celular (código por SMS ou WhatsApp) | Twilio Verify (`src/otp.js`) |
 
 ## Rodar no computador
 
@@ -87,6 +87,17 @@ Depois abra http://localhost:8787. No computador o login roda em **modo de teste
 
    Sem esses secrets, o app publicado recusa o login com a mensagem "O envio de SMS ainda não foi configurado". Ele **nunca** cai no modo de teste em produção. Na conta de teste (trial) do Twilio, o SMS só chega em números verificados no painel; para liberar qualquer número, adicione saldo à conta.
 
+   **WhatsApp (opcional):**
+   1. No Twilio, crie um remetente de WhatsApp: **Messaging → Senders → WhatsApp senders**. É preciso ligar uma conta do WhatsApp Business, e a Meta aprova o remetente.
+   2. Abra o serviço do Verify, vá em **WhatsApp** e selecione esse remetente.
+   3. Ative a opção no Worker. Ele pede o valor; digite `true`:
+
+   ```bash
+   npx wrangler secret put WHATSAPP_ENABLED
+   ```
+
+   O botão **Receber pelo WhatsApp** só aparece no app quando essa opção está ligada. Até lá, o app mostra só o SMS.
+
 6. Publique:
 
    ```bash
@@ -99,7 +110,8 @@ Depois abra http://localhost:8787. No computador o login roda em **modo de teste
 
 | Método | Rota | O que faz |
 | --- | --- | --- |
-| POST | `/api/auth/send` | Envia o código por SMS (`phone`). |
+| GET | `/api/auth/channels` | Formas de envio disponíveis: `{ sms, whatsapp }`. |
+| POST | `/api/auth/send` | Envia o código (`phone`, `channel`: `"sms"` ou `"whatsapp"`). |
 | POST | `/api/auth/verify` | Confere o código (`phone`, `code`). Conta existente: devolve `token`; número novo: devolve `signupTicket`. |
 | POST | `/api/users` | Cria a conta depois de verificar o número (`signupTicket`, `name`, `handle`). Devolve `token`. |
 | DELETE | `/api/auth/session` | Sai da conta neste aparelho. |
@@ -123,7 +135,7 @@ A autenticação usa `Authorization: Bearer <token>`. Cada aparelho tem a sua se
 ## Regras importantes
 
 - **Login por celular**:
-  - A pessoa digita o número e recebe um código de 6 números por SMS. Se o número já tem conta, entra direto; se é novo, escolhe nome, @ e foto.
+  - A pessoa digita o número e escolhe receber o código de 6 números **pelo WhatsApp** ou **por SMS**. Na tela do código dá para trocar de forma de envio. Se o número já tem conta, entra direto; se é novo, escolhe nome, @ e foto.
   - Só aceita **celular brasileiro com DDD**: `(DD) 9XXXX-XXXX`.
   - Limites contra abuso: 1 código por minuto e 5 por hora para cada número, 20 por hora para cada rede (IP). O código vale 10 minutos e é bloqueado depois de 5 tentativas erradas.
 
@@ -138,7 +150,8 @@ A autenticação usa `Authorization: Bearer <token>`. Cada aparelho tem a sua se
 
 - **Contas criadas antes do login por celular** continuam funcionando no aparelho onde foram criadas, mas não têm número ligado a elas.
 - **O limite contra abuso cobre só o envio de códigos.** Posts e comentários ainda não têm limite; dá para ativar Rate Limiting no painel da Cloudflare.
-- **Cada SMS do Twilio Verify custa** (no Brasil, centavos de dólar por verificação). O Verify também aceita envio por **WhatsApp**; para usar, crie um remetente de WhatsApp no Twilio e troque `Channel: "sms"` por `"whatsapp"` em `src/otp.js`.
+- **Cada verificação do Twilio Verify tem custo**, seja por SMS ou WhatsApp (centavos de dólar por verificação).
+- **Os limites de envio valem para SMS e WhatsApp juntos.** Quem pediu por WhatsApp espera 1 minuto para pedir por SMS.
 - **No celular, o navegador pausa o GPS quando o app vai para segundo plano.** Para compartilhar em segundo plano de verdade, é preciso um app nativo ou PWA.
 - **O link do 99** (`taxis99://call?...`) não é documentado oficialmente. Se não abrir, o app leva para a loja ou para o site da 99. O link do Uber segue a documentação oficial.
 - **Um único Durable Object atende a cidade inteira.** Isso aguenta milhares de conexões; para escalar mais, dá para dividir por região.
