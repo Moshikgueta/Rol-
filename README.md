@@ -11,6 +11,18 @@ App web (mobile-first) com backend na **Cloudflare**:
 | Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
 | Login por celular (código por SMS ou WhatsApp) | Twilio Verify (`src/otp.js`) |
 
+## Versão de demonstração (GitHub Pages)
+
+A cada atualização da `main`, o workflow `.github/workflows/pages.yml` publica uma versão de demonstração em https://moshikgueta.github.io/Rol-/. Essa versão não usa servidor:
+
+- **O que você posta fica só no seu navegador.** Ninguém mais vê, e nada é enviado para servidor nenhum.
+- **O código de login aparece na tela**, sem SMS nem WhatsApp.
+- **Os amigos "ao vivo" são simulados.**
+
+Ela usa `public/demo.js`, que imita a API dentro do navegador. O modo é ligado pelo arquivo `config.js`, que o workflow troca por `{ demo: true }`.
+
+Para ativar o GitHub Pages pela primeira vez: no repositório, abra **Settings → Pages** e, em **Build and deployment → Source**, escolha **GitHub Actions**.
+
 ## Rodar no computador
 
 Requer Node.js 18 ou mais novo.
