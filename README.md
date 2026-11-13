@@ -19,9 +19,9 @@ A cada atualização da `main`, o workflow `.github/workflows/pages.yml` publica
 - **O código de login aparece na tela**, sem SMS nem WhatsApp.
 - **Os amigos "ao vivo" são simulados.**
 
-Ela usa `public/demo.js`, que imita a API dentro do navegador. O modo é ligado pelo arquivo `config.js`, que o workflow troca por `{ demo: true }`.
+Ela usa `public/demo.js`, que imita a API dentro do navegador. O modo demonstração liga sozinho quando o site está num endereço `github.io` (veja `public/config.js`).
 
-Para ativar o GitHub Pages pela primeira vez: no repositório, abra **Settings → Pages** e, em **Build and deployment → Source**, escolha **GitHub Actions**.
+Para ativar o GitHub Pages pela primeira vez: no repositório, abra **Settings → Pages** e, em **Build and deployment → Source**, escolha **GitHub Actions**. O endereço fica https://moshikgueta.github.io/Rol-/. A opção **Deploy from a branch** (`main`, pasta raiz) também funciona: o `index.html` da raiz abre o app em https://moshikgueta.github.io/Rol-/public/.
 
 ## Rodar no computador
 

@@ -29,7 +29,6 @@ jobs:
         run: |
           mkdir -p _site
           cp -r public/. _site/
-          echo 'window.ROLE_CONFIG = { demo: true };' > _site/config.js
           touch _site/.nojekyll
 
       - uses: actions/configure-pages@v5

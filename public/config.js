@@ -1,2 +1,3 @@
-// Configuração do app. Na versão do GitHub Pages este arquivo é trocado por { demo: true }.
-window.ROLE_CONFIG = { demo: false };
+// Configuração do app. No GitHub Pages (github.io) não há servidor, então o app
+// roda em modo demonstração. No Worker da Cloudflare ele usa a API de verdade.
+window.ROLE_CONFIG = { demo: /\.github\.io$/.test(location.hostname) };
