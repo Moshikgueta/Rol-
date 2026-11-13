@@ -84,6 +84,7 @@
           <div class="chip chip-user" data-action="open-author">
             <img id="post-avatar" alt="" />
             <span id="post-handle"></span>
+            <button class="follow hidden" id="btn-follow" data-action="follow">Seguir</button>
           </div>
           <div class="chip chip-time" id="post-time"></div>
           <div class="badge" id="post-price"></div>
@@ -121,7 +122,7 @@
       <div class="stats">
         <div><b id="stat-checkins">0</b><span>check-ins</span></div>
         <div><b id="stat-likes">0</b><span>curtidas</span></div>
-        <div><b id="stat-comments">0</b><span>comentários</span></div>
+        <div><b id="stat-friends">0</b><span>amigos</span></div>
       </div>
     </header>
 
@@ -248,7 +249,7 @@
   <div id="sheet-live" class="sheet">
     <div class="grabber"></div>
     <h3>Localização em tempo real</h3>
-    <p class="muted small">Enquanto estiver ligada, sua posição aparece no mapa e se atualiza conforme você se move.</p>
+    <p class="muted small">Enquanto estiver ligada, sua posição aparece no mapa de outras pessoas e se atualiza conforme você se move. "Amigos" são as pessoas que você segue.</p>
     <div class="field">
       <span>Quem pode ver</span>
       <div class="chips" id="live-visibility">
@@ -317,7 +318,6 @@
 </svg>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

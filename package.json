@@ -1,0 +1,16 @@
+{
+  "name": "role",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply role-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply role-db --remote",
+    "db:seed:local": "wrangler d1 execute role-db --local --file=seed/seed.sql",
+    "db:seed:remote": "wrangler d1 execute role-db --remote --file=seed/seed.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

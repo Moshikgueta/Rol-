@@ -472,3 +472,11 @@ textarea.input { height: auto; padding: 14px 18px; resize: none; }
   transition: .2s; max-width: 90%; text-align: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+.chip-user .follow {
+  margin-left: 2px; padding: 5px 12px;
+  border-radius: var(--radius);
+  background: var(--yellow); color: var(--white);
+  font-size: 13px; font-weight: 700;
+}
+.chip-user .follow.on { background: rgba(255,255,255,.25); }

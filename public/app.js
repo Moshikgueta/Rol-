@@ -1,46 +1,79 @@
 (() => {
   "use strict";
 
-  const DATA = window.ROLE_DATA;
-  const STORE_KEY = "role:v1";
+  const TOKEN_KEY = "role:token";
+  const LIVE_KEY = "role:live";
+  const CENTER = [-25.4285, -49.2700]; // Centro de Curitiba
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const enc = encodeURIComponent;
   const MIN = 60 * 1000;
 
   // ---------------- Estado ----------------
-  const saved = load();
   const state = {
-    user: saved.user || null,
-    myPosts: saved.myPosts || [],
-    likes: saved.likes || {},
-    myComments: saved.myComments || {},
-    liveSettings: saved.liveSettings || { visibility: "friends", duration: 60 },
-    live: saved.live || { active: false, until: 0, startedAt: 0 },
-    notifications: saved.notifications || DATA.notifications.map((n) => ({ ...n, read: false })),
+    token: localStorage.getItem(TOKEN_KEY),
+    user: null,
+    posts: [],
+    notifications: [],
+    liveSettings: { visibility: "friends", duration: 60 },
+    live: { active: false, until: 0 },
+    sharers: new Map(), // userId -> { user, lat, lng, until }
     tab: "roles",
     search: "",
     selected: null,
     myPos: null,
     history: [],
   };
+  try { Object.assign(state, JSON.parse(localStorage.getItem(LIVE_KEY)) || {}); } catch { /* ignora */ }
+  const persistLive = () => localStorage.setItem(LIVE_KEY, JSON.stringify({ liveSettings: state.liveSettings, live: state.live }));
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
-  }
-  function persist() {
-    const { user, myPosts, likes, myComments, liveSettings, live, notifications } = state;
+  // ---------------- API ----------------
+  async function api(path, { method = "GET", body, raw, contentType } = {}) {
+    const headers = {};
+    if (state.token) headers.authorization = "Bearer " + state.token;
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (raw) headers["content-type"] = contentType;
+    let res;
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ user, myPosts, likes, myComments, liveSettings, live, notifications }));
+      res = await fetch("/api" + path, { method, headers, body: raw || (body !== undefined ? JSON.stringify(body) : undefined) });
     } catch {
-      toast("Armazenamento cheio: não foi possível salvar.");
+      throw new Error("Sem conexão. Verifique sua internet.");
     }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || "Algo deu errado.");
+      err.status = res.status;
+      throw err;
+    }
+    return data;
   }
 
-  const allPosts = () => [...state.myPosts, ...DATA.posts];
-  const findPost = (id) => allPosts().find((p) => p.id === id);
-  const expiresAt = (p) => p.postedAt + p.durationMin * MIN;
-  const isActive = (p) => expiresAt(p) > Date.now();
+  const findPost = (id) => state.posts.find((p) => p.id === id);
+  const isActive = (p) => p.expiresAt > Date.now();
+  function upsertPost(p) {
+    const i = state.posts.findIndex((x) => x.id === p.id);
+    if (i >= 0) state.posts[i] = p; else state.posts.unshift(p);
+  }
+
+  async function loadPosts() {
+    try {
+      const { posts } = await api("/posts");
+      state.posts = posts;
+      renderMarkers();
+      if (state.selected) {
+        const p = findPost(state.selected);
+        if (p) updatePostCounts(p);
+      }
+    } catch (e) { toast(e.message); }
+  }
+
+  async function loadNotifications() {
+    if (!state.user) { state.notifications = []; syncNotifDot(); return; }
+    try {
+      state.notifications = (await api("/notifications")).notifications;
+      syncNotifDot();
+    } catch { /* silencioso */ }
+  }
 
   // ---------------- Helpers ----------------
   function initials(name = "?") {
@@ -49,14 +82,14 @@
   function esc(s = "") {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  // Avatar com fallback para iniciais se a imagem falhar
+  // Avatar com fallback para iniciais se a imagem não carregar
   function faceHTML(person) {
     const img = person && person.avatar
       ? `<img src="${esc(person.avatar)}" alt="" onerror="this.remove()" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit">`
       : "";
     return `<span style="position:relative;display:grid;place-items:center;width:100%;height:100%;border-radius:inherit">${esc(initials(person && person.name))}${img}</span>`;
   }
-  function setAvatar(el, person) { el.innerHTML = faceHTML(person); }
+  const setAvatar = (el, person) => { el.innerHTML = faceHTML(person); };
 
   function fmtClock(ts) {
     const d = new Date(ts);
@@ -82,7 +115,7 @@
     const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(x));
   }
-  function fmtDist(km) { return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`; }
+  const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`);
 
   let toastTimer;
   function toast(msg) {
@@ -93,25 +126,26 @@
     toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
   }
 
-  function resizeImage(file, max = 900) {
+  // Redimensiona a foto no aparelho antes de enviar (economiza dados).
+  function resizeImage(file, max = 1080) {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = reject;
-        img.onload = () => {
-          const scale = Math.min(1, max / Math.max(img.width, img.height));
-          const c = document.createElement("canvas");
-          c.width = Math.round(img.width * scale);
-          c.height = Math.round(img.height * scale);
-          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-          resolve(c.toDataURL("image/jpeg", 0.8));
-        };
-        img.src = reader.result;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Não foi possível ler a foto.")); };
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Não foi possível ler a foto."))), "image/jpeg", 0.82);
       };
-      reader.readAsDataURL(file);
+      img.src = url;
     });
+  }
+  async function uploadPhoto(blob) {
+    return (await api("/uploads", { method: "POST", raw: blob, contentType: "image/jpeg" })).url;
   }
 
   function getPosition() {
@@ -123,20 +157,6 @@
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
       );
     });
-  }
-
-  async function reverseGeocode([lat, lng]) {
-    try {
-      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=pt-BR&zoom=18`);
-      const j = await r.json();
-      const a = j.address || {};
-      const street = a.road || a.pedestrian || a.square || a.amenity || j.name;
-      const hood = a.suburb || a.neighbourhood || a.quarter;
-      const city = a.city || a.town || a.village;
-      const parts = [street, [hood, city].filter(Boolean).join(", ")].filter(Boolean);
-      if (parts.length) return parts.join(" - ");
-    } catch { /* usa coordenadas */ }
-    return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
   }
 
   // ---------------- Navegação ----------------
@@ -178,12 +198,12 @@
   }
 
   // ---------------- Mapa ----------------
-  let map, markersLayer, liveLayer, myLiveMarker;
-  const markerById = {};
+  let map, markersLayer, liveLayer;
+  const liveMarkers = new Map();
 
   function initMap() {
     if (map) return;
-    map = L.map("map", { zoomControl: false, attributionControl: true }).setView(DATA.center, 17);
+    map = L.map("map", { zoomControl: false }).setView(CENTER, 17);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
       maxZoom: 20,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
@@ -191,14 +211,12 @@
     markersLayer = L.layerGroup().addTo(map);
     liveLayer = L.layerGroup().addTo(map);
     renderMarkers();
-    renderFriendsLive();
-    setInterval(moveFriends, 4000);
-    if (state.live.active) startLive(true);
+    renderLive();
   }
 
   function visiblePosts() {
     const q = state.search.trim().toLowerCase();
-    return allPosts().filter((p) => {
+    return state.posts.filter((p) => {
       if (!isActive(p)) return false;
       if ((state.tab === "events") !== (p.type === "event")) return false;
       if (!q) return true;
@@ -209,17 +227,15 @@
   function renderMarkers() {
     if (!map) return;
     markersLayer.clearLayers();
-    Object.keys(markerById).forEach((k) => delete markerById[k]);
     visiblePosts().forEach((p) => {
       const isEvent = p.type === "event";
-      const img = isEvent ? p.photo : p.author.avatar;
       const html = `<div class="pin ${isEvent ? "event" : ""} ${state.selected === p.id ? "selected" : ""}">
-          <div class="pin-img">${faceHTML({ name: p.author.name, avatar: img })}</div>
+          <div class="pin-img">${faceHTML({ name: p.author.name, avatar: isEvent ? p.photo : p.author.avatar })}</div>
         </div>`;
       const icon = L.divIcon({ className: "pin-wrap", html, iconSize: [64, 80], iconAnchor: [32, 80] });
-      const m = L.marker([p.lat, p.lng], { icon, title: p.title, riseOnHover: true }).addTo(markersLayer);
-      m.on("click", () => openPost(p.id));
-      markerById[p.id] = m;
+      L.marker([p.lat, p.lng], { icon, title: p.title, riseOnHover: true })
+        .on("click", () => openPost(p.id))
+        .addTo(markersLayer);
     });
   }
 
@@ -231,26 +247,26 @@
     });
   }
 
-  function renderFriendsLive() {
-    liveLayer.clearLayers();
-    DATA.liveFriends.forEach((f) => {
-      f.marker = L.marker([f.lat, f.lng], { icon: liveIcon(f.person), title: `${f.person.name} (ao vivo)` })
-        .bindPopup(`<b>${esc(f.person.name)}</b><br>@${esc(f.person.handle)} · compartilhando ao vivo`)
-        .addTo(liveLayer);
-    });
-  }
-  function moveFriends() {
-    DATA.liveFriends.forEach((f) => {
-      f.lat += (Math.random() - 0.5) * 0.00012;
-      f.lng += (Math.random() - 0.5) * 0.00012;
-      f.marker && f.marker.setLatLng([f.lat, f.lng]);
-    });
+  function renderLive() {
+    if (!map) return;
+    for (const [id, m] of liveMarkers) {
+      if (!state.sharers.has(id)) { m.remove(); liveMarkers.delete(id); }
+    }
+    for (const [id, s] of state.sharers) {
+      const me = state.user && id === state.user.id;
+      let m = liveMarkers.get(id);
+      if (!m) {
+        m = L.marker([s.lat, s.lng], { icon: liveIcon(s.user, me), zIndexOffset: me ? 1000 : 500, title: `${s.user.name} (ao vivo)` })
+          .bindPopup(`<b>${esc(s.user.name)}</b><br>@${esc(s.user.handle)} · ao vivo`)
+          .addTo(liveLayer);
+        liveMarkers.set(id, m);
+      } else {
+        m.setLatLng([s.lat, s.lng]);
+      }
+    }
   }
 
   // ---------------- Post ----------------
-  function likeCount(p) { return (p.likes || 0) + (state.likes[p.id] ? 1 : 0); }
-  function commentsOf(p) { return [...(p.comments || []), ...(state.myComments[p.id] || [])]; }
-
   function openPost(id) {
     const p = findPost(id);
     if (!p) return;
@@ -259,8 +275,8 @@
 
     $("#post-photo").style.backgroundImage = `url("${p.photo}")`;
     const av = $("#post-avatar");
-    av.src = p.author.avatar || "";
-    av.onerror = () => { av.removeAttribute("src"); };
+    av.onerror = () => av.removeAttribute("src");
+    if (p.author.avatar) av.src = p.author.avatar; else av.removeAttribute("src");
     $("#post-handle").textContent = "@" + p.author.handle;
     $("#post-time").textContent = fmtClock(p.postedAt);
     const price = $("#post-price");
@@ -291,39 +307,69 @@
   }
 
   function updatePostCounts(p) {
-    const liked = !!state.likes[p.id];
-    $("#btn-like").classList.toggle("liked", liked);
-    $("#btn-like").setAttribute("aria-pressed", liked);
-    $("#like-count").textContent = likeCount(p) || "";
-    $("#comment-count").textContent = commentsOf(p).length || "";
+    $("#btn-like").classList.toggle("liked", p.liked);
+    $("#btn-like").setAttribute("aria-pressed", p.liked);
+    $("#like-count").textContent = p.likes || "";
+    $("#comment-count").textContent = p.commentCount || "";
+    const f = $("#btn-follow");
+    f.classList.toggle("hidden", p.mine || p.type === "event");
+    f.classList.toggle("on", p.following);
+    f.textContent = p.following ? "Amigos ✓" : "Seguir";
   }
 
   function updateCountdown() {
-    if (!state.selected) return;
-    const p = findPost(state.selected);
+    const p = state.selected && findPost(state.selected);
     if (!p) return;
-    const left = expiresAt(p) - Date.now();
+    const left = p.expiresAt - Date.now();
     $("#post-countdown").textContent = fmtRemaining(left);
     $("#post-countdown").title = `Status visível por mais ${fmtRemaining(left)} (horas:minutos)`;
   }
 
-  function toggleLike() {
+  async function toggleLike() {
     const p = findPost(state.selected);
     if (!p || !requireAccount()) return;
-    state.likes[p.id] = !state.likes[p.id];
-    if (!state.likes[p.id]) delete state.likes[p.id];
-    persist();
+    const wasLiked = p.liked;
+    Object.assign(p, { liked: !wasLiked, likes: p.likes + (wasLiked ? -1 : 1) });
     updatePostCounts(p);
+    try {
+      const { post } = await api(`/posts/${p.id}/like`, { method: wasLiked ? "DELETE" : "POST" });
+      upsertPost(post);
+      if (state.selected === post.id) updatePostCounts(post);
+    } catch (e) {
+      Object.assign(p, { liked: wasLiked, likes: p.likes + (wasLiked ? 1 : -1) });
+      updatePostCounts(p);
+      toast(e.message);
+    }
   }
 
-  function openComments() {
+  async function toggleFollow() {
+    const p = findPost(state.selected);
+    if (!p || !requireAccount()) return;
+    const was = p.following;
+    try {
+      await api(`/users/${p.author.id}/follow`, { method: was ? "DELETE" : "POST" });
+      state.posts.filter((x) => x.author.id === p.author.id).forEach((x) => (x.following = !was));
+      updatePostCounts(p);
+      toast(was ? `Você deixou de seguir @${p.author.handle}` : `@${p.author.handle} agora é seu amigo no Rolê`);
+      sendLiveStart(); // atualiza quem pode ver sua localização
+    } catch (e) { toast(e.message); }
+  }
+
+  async function openComments() {
     const p = findPost(state.selected);
     if (!p) return;
-    renderComments(p);
+    $("#comment-list").innerHTML = `<li class="muted">Carregando...</li>`;
     openSheet("sheet-comments");
+    try {
+      const { comments } = await api(`/posts/${p.id}/comments`);
+      renderComments(comments);
+    } catch (e) {
+      $("#comment-list").innerHTML = `<li class="muted">${esc(e.message)}</li>`;
+    }
   }
-  function renderComments(p) {
-    const list = commentsOf(p).sort((a, b) => a.at - b.at);
+  let currentComments = [];
+  function renderComments(list) {
+    currentComments = list;
     $("#comment-list").innerHTML = list.length
       ? list.map((c) => `<li><span class="avatar">${faceHTML(c.author)}</span>
           <div><p><b>@${esc(c.author.handle)}</b> ${esc(c.text)}</p><small>${timeAgo(c.at)}</small></div></li>`).join("")
@@ -331,23 +377,28 @@
     const ul = $("#comment-list");
     ul.scrollTop = ul.scrollHeight;
   }
-  function submitComment(e) {
+  async function submitComment(e) {
     e.preventDefault();
     const p = findPost(state.selected);
     if (!p || !requireAccount()) return;
-    const text = $("#comment-input").value.trim();
+    const input = $("#comment-input");
+    const text = input.value.trim();
     if (!text) return;
-    (state.myComments[p.id] ||= []).push({ author: publicUser(), text, at: Date.now() });
-    persist();
-    $("#comment-input").value = "";
-    renderComments(p);
-    updatePostCounts(p);
+    input.disabled = true;
+    try {
+      const { comment } = await api(`/posts/${p.id}/comments`, { method: "POST", body: { text } });
+      input.value = "";
+      renderComments([...currentComments, comment]);
+      p.commentCount++;
+      updatePostCounts(p);
+    } catch (err) { toast(err.message); }
+    input.disabled = false;
   }
 
   async function sharePost() {
     const p = findPost(state.selected);
     if (!p) return;
-    const url = `${location.origin}${location.pathname}?role=${enc(p.id)}`;
+    const url = `${location.origin}/?role=${enc(p.id)}`;
     const data = { title: `Rolê: ${p.title}`, text: `${p.title} — ${p.place}`, url };
     try {
       if (navigator.share) await navigator.share(data);
@@ -363,9 +414,7 @@
       `https://m.uber.com/ul/?action=setPickup&pickup=my_location` +
       `&dropoff[latitude]=${p.lat}&dropoff[longitude]=${p.lng}` +
       `&dropoff[nickname]=${enc(p.title)}&dropoff[formatted_address]=${enc(p.place)}`;
-    $("#ride-99").dataset.lat = p.lat;
-    $("#ride-99").dataset.lng = p.lng;
-    $("#ride-99").dataset.title = p.title;
+    Object.assign($("#ride-99").dataset, { lat: p.lat, lng: p.lng, title: p.title });
     $("#ride-maps").href = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`;
     openSheet("sheet-ride");
   }
@@ -375,9 +424,7 @@
     const ua = navigator.userAgent;
     const store = /android/i.test(ua)
       ? "https://play.google.com/store/apps/details?id=com.taxis99"
-      : /iphone|ipad|ipod/i.test(ua)
-        ? "https://apps.apple.com/br/app/99/id553663691"
-        : "https://99app.com/";
+      : /iphone|ipad|ipod/i.test(ua) ? "https://apps.apple.com/br/app/99/id553663691" : "https://99app.com/";
     // Tenta abrir o app da 99 com o destino; se não abrir, vai para a loja/site.
     const fallback = setTimeout(() => { if (!document.hidden) window.open(store, "_blank"); }, 1500);
     document.addEventListener("visibilitychange", () => clearTimeout(fallback), { once: true });
@@ -385,29 +432,33 @@
   }
 
   // ---------------- Lista ----------------
+  function postItem(p, side) {
+    return `<li data-post="${p.id}">
+      <span class="thumb" style="background-image:url('${esc(p.photo)}')"></span>
+      <span class="meta"><b>${esc(p.title)}</b><span>${side.sub}</span></span>
+      ${side.right}
+    </li>`;
+  }
   function openList() {
-    const origin = state.myPos || (map ? [map.getCenter().lat, map.getCenter().lng] : DATA.center);
-    const items = visiblePosts()
-      .map((p) => ({ p, d: distanceKm(origin, [p.lat, p.lng]) }))
-      .sort((a, b) => a.d - b.d);
+    const origin = state.myPos || (map ? [map.getCenter().lat, map.getCenter().lng] : CENTER);
+    const items = visiblePosts().map((p) => ({ p, d: distanceKm(origin, [p.lat, p.lng]) })).sort((a, b) => a.d - b.d);
     $("#list-title").textContent = state.tab === "events" ? "Eventos perto de você" : "Rolês perto de você";
     $("#list-items").innerHTML = items.length
-      ? items.map(({ p, d }) => `<li data-post="${p.id}">
-          <span class="thumb" style="background-image:url('${esc(p.photo)}')"></span>
-          <span class="meta"><b>${esc(p.title)}</b><span>@${esc(p.author.handle)} · ★ ${p.rating} · ${p.free ? "Grátis" : "Pago"}</span></span>
-          <span class="side">${fmtDist(d)}<br><span class="muted">${fmtClock(p.postedAt)}</span></span>
-        </li>`).join("")
+      ? items.map(({ p, d }) => postItem(p, {
+          sub: `@${esc(p.author.handle)} · ★ ${p.rating} · ${p.free ? "Grátis" : "Pago"}`,
+          right: `<span class="side">${fmtDist(d)}<br><span class="muted">${fmtClock(p.postedAt)}</span></span>`,
+        })).join("")
       : `<li class="empty">Nada por aqui ainda. Que tal fazer um check-in?</li>`;
     openSheet("sheet-list");
   }
 
   // ---------------- Check-in ----------------
-  let checkin = { photo: null, pos: null, place: null, rating: 0, free: true, duration: 180 };
+  let checkin;
   let checkinRequest = 0;
 
   function openCheckin() {
     if (!requireAccount("checkin")) return;
-    checkin = { photo: null, pos: null, place: null, rating: 0, free: true, duration: 180 };
+    checkin = { photo: null, preview: null, pos: null, place: null, rating: 0, free: true, duration: 180 };
     $("#checkin-form").reset();
     const prev = $("#checkin-preview");
     prev.style.backgroundImage = "";
@@ -426,10 +477,9 @@
     try {
       const pos = await getPosition();
       if (req !== checkinRequest) return;
-      checkin.pos = pos;
-      state.myPos = pos;
+      checkin.pos = state.myPos = pos;
       label.textContent = "Localização encontrada, buscando endereço...";
-      const place = await reverseGeocode(pos);
+      const { place } = await api(`/geocode?lat=${pos[0]}&lng=${pos[1]}`);
       if (req !== checkinRequest) return;
       checkin.place = place;
       label.textContent = place;
@@ -448,44 +498,83 @@
     ).join("");
   }
   function validateCheckin() {
-    const ok = checkin.photo && checkin.pos && checkin.place && checkin.rating > 0 && $("#checkin-title").value.trim();
+    const ok = checkin && checkin.photo && checkin.pos && checkin.place && checkin.rating > 0 && $("#checkin-title").value.trim();
     $("#checkin-submit").disabled = !ok;
   }
-  function submitCheckin(e) {
+  async function submitCheckin(e) {
     e.preventDefault();
-    if ($("#checkin-submit").disabled) return;
-    const post = {
-      id: "me-" + Date.now(),
-      type: "role",
-      author: publicUser(),
-      title: $("#checkin-title").value.trim(),
-      description: $("#checkin-desc").value.trim(),
-      photo: checkin.photo,
-      lat: checkin.pos[0], lng: checkin.pos[1],
-      place: checkin.place,
-      rating: checkin.rating,
-      free: checkin.free,
-      postedAt: Date.now(),
-      durationMin: checkin.duration,
-      likes: 0, comments: [],
-      mine: true,
-    };
-    state.myPosts.unshift(post);
-    persist();
-    closeSheets();
-    state.tab = "roles";
-    syncTabs();
-    renderMarkers();
-    toast("Check-in postado! 🎉");
-    openPost(post.id);
+    const btn = $("#checkin-submit");
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = "Postando...";
+    try {
+      const photo = await uploadPhoto(checkin.photo);
+      const { post } = await api("/posts", {
+        method: "POST",
+        body: {
+          title: $("#checkin-title").value.trim(),
+          description: $("#checkin-desc").value.trim(),
+          photo, lat: checkin.pos[0], lng: checkin.pos[1],
+          rating: checkin.rating, free: checkin.free, durationMin: checkin.duration,
+        },
+      });
+      upsertPost(post);
+      closeSheets();
+      state.tab = "roles";
+      syncTabs();
+      renderMarkers();
+      toast("Check-in postado! 🎉");
+      openPost(post.id);
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+    }
+    btn.textContent = "Postar check-in";
   }
 
   function setChips(sel, value) {
     $$(sel + " .chip-opt").forEach((b) => b.classList.toggle("active", b.dataset.value === String(value)));
   }
 
-  // ---------------- Localização em tempo real ----------------
-  let liveWatch = null;
+  // ---------------- Localização em tempo real (WebSocket) ----------------
+  let ws = null, wsRetry = 0, wsTimer = null, liveWatch = null;
+
+  function connectLive() {
+    clearTimeout(wsTimer);
+    if (ws) { ws.onclose = null; ws.close(); }
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const q = state.token ? `?token=${enc(state.token)}` : "";
+    ws = new WebSocket(`${proto}://${location.host}/api/live${q}`);
+    ws.onopen = () => {
+      wsRetry = 0;
+      if (state.live.active) { sendLiveStart(); sendMyPos(); }
+    };
+    ws.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "snapshot") {
+        state.sharers = new Map(m.sharers.map((s) => [s.user.id, s]));
+      } else if (m.type === "update") {
+        state.sharers.set(m.sharer.user.id, m.sharer);
+      } else if (m.type === "remove") {
+        state.sharers.delete(m.userId);
+      } else if (m.type === "error") {
+        toast(m.message);
+      }
+      renderLive();
+    };
+    ws.onclose = () => {
+      // Reconecta com espera crescente (1s, 2s, 4s... até 30s)
+      wsTimer = setTimeout(connectLive, Math.min(30000, 1000 * 2 ** wsRetry++));
+    };
+  }
+  const wsSend = (msg) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
+  function sendLiveStart() {
+    if (!state.live.active) return;
+    wsSend({ type: "start", visibility: state.liveSettings.visibility, until: state.live.until });
+  }
+  function sendMyPos() {
+    if (state.live.active && state.myPos) wsSend({ type: "pos", lat: state.myPos[0], lng: state.myPos[1] });
+  }
 
   function openLiveSettings() {
     if (!requireAccount("live")) return;
@@ -499,42 +588,45 @@
     if (!state.user) return;
     if (!navigator.geolocation) { toast("Seu navegador não suporta GPS."); return; }
     if (!resume) {
-      const now = Date.now();
       const dur = Number(state.liveSettings.duration);
-      state.live = { active: true, startedAt: now, until: dur ? now + dur * MIN : 0 };
-      persist();
+      state.live = { active: true, until: dur ? Date.now() + dur * MIN : 0 };
+      persistLive();
     }
+    sendLiveStart();
     if (liveWatch !== null) navigator.geolocation.clearWatch(liveWatch);
-    let first = true;
+    let first = !resume;
     liveWatch = navigator.geolocation.watchPosition(
       (p) => {
-        const pos = [p.coords.latitude, p.coords.longitude];
-        state.myPos = pos;
-        if (!map) return;
-        if (!myLiveMarker) myLiveMarker = L.marker(pos, { icon: liveIcon(publicUser(), true), zIndexOffset: 1000 }).addTo(map);
-        else myLiveMarker.setLatLng(pos);
-        if (first && !resume) { map.setView(pos, 17); first = false; }
+        state.myPos = [p.coords.latitude, p.coords.longitude];
+        sendMyPos();
+        if (first && map) { map.setView(state.myPos, 17); first = false; }
       },
       (err) => {
-        toast(err.code === 1 ? "Permita o acesso à localização para compartilhar." : "Não foi possível obter sua localização.");
-        stopLive(true);
+        if (err.code === 1) {
+          toast("Permita o acesso à localização para compartilhar.");
+          stopLive(true);
+        } else {
+          // Falha momentânea do GPS (túnel, prédio): continua tentando.
+          toast("Sinal de GPS fraco, tentando de novo...");
+        }
       },
       { enableHighAccuracy: true, maximumAge: 5000 }
     );
     syncLiveUI();
     if (!resume) {
       closeSheets();
-      const who = state.liveSettings.visibility === "all" ? "todos" : "seus amigos";
-      toast(`Compartilhando sua localização com ${who}.`);
+      toast(`Compartilhando sua localização com ${state.liveSettings.visibility === "all" ? "todos" : "seus amigos"}.`);
     }
   }
 
   function stopLive(silent = false) {
     if (liveWatch !== null) navigator.geolocation.clearWatch(liveWatch);
     liveWatch = null;
-    if (myLiveMarker) { myLiveMarker.remove(); myLiveMarker = null; }
-    state.live = { active: false, until: 0, startedAt: 0 };
-    persist();
+    wsSend({ type: "stop" });
+    if (state.user) state.sharers.delete(state.user.id);
+    renderLive();
+    state.live = { active: false, until: 0 };
+    persistLive();
     syncLiveUI();
     if (!silent) toast("Você parou de compartilhar sua localização.");
   }
@@ -576,10 +668,6 @@
   }
 
   // ---------------- Conta / Área do membro ----------------
-  function publicUser() {
-    return state.user ? { name: state.user.name, handle: state.user.handle, avatar: state.user.avatar } : null;
-  }
-
   function renderDrawer() {
     const u = state.user;
     setAvatar($("#drawer-avatar"), u || { name: "?" });
@@ -588,62 +676,71 @@
     $("#drawer-auth").classList.toggle("hidden", !!u);
   }
 
-  function renderMember() {
+  async function renderMember() {
     const u = state.user;
     if (!u) return;
     setAvatar($("#member-avatar"), u);
     $("#member-name").textContent = u.name;
     $("#member-handle").textContent = "@" + u.handle;
-    $("#stat-checkins").textContent = state.myPosts.length;
-    $("#stat-likes").textContent = state.myPosts.reduce((s, p) => s + likeCount(p), 0);
-    $("#stat-comments").textContent = Object.values(state.myComments).reduce((s, l) => s + l.length, 0);
-
-    $("#my-posts").innerHTML = state.myPosts.length
-      ? state.myPosts.map((p) => `<li data-post="${p.id}">
-          <span class="thumb" style="background-image:url('${esc(p.photo)}')"></span>
-          <span class="meta"><b>${esc(p.title)}</b><span>${esc(p.place)} · ${isActive(p) ? "ativo · " + fmtRemaining(expiresAt(p) - Date.now()) : "encerrado"}</span></span>
-          <button class="del" data-delete="${p.id}">Apagar</button>
-        </li>`).join("")
-      : `<li class="empty">Você ainda não fez check-in.</li>`;
-
-    const liked = allPosts().filter((p) => state.likes[p.id]);
-    $("#my-likes").innerHTML = liked.length
-      ? liked.map((p) => `<li data-post="${p.id}">
-          <span class="thumb" style="background-image:url('${esc(p.photo)}')"></span>
-          <span class="meta"><b>${esc(p.title)}</b><span>@${esc(p.author.handle)} · ★ ${p.rating}</span></span>
-        </li>`).join("")
-      : `<li class="empty">Nenhuma curtida ainda.</li>`;
     syncLiveUI();
+    try {
+      const s = await api("/me/summary");
+      $("#stat-checkins").textContent = s.stats.checkins;
+      $("#stat-likes").textContent = s.stats.likesReceived;
+      $("#stat-friends").textContent = s.stats.following;
+      $("#my-posts").innerHTML = s.posts.length
+        ? s.posts.map((p) => postItem(p, {
+            sub: `${esc(p.place)} · ${isActive(p) ? "ativo · " + fmtRemaining(p.expiresAt - Date.now()) : "encerrado"} · ♥ ${p.likes}`,
+            right: `<button class="del" data-delete="${p.id}">Apagar</button>`,
+          })).join("")
+        : `<li class="empty">Você ainda não fez check-in.</li>`;
+      $("#my-likes").innerHTML = s.liked.length
+        ? s.liked.map((p) => postItem(p, { sub: `@${esc(p.author.handle)} · ★ ${p.rating}`, right: "" })).join("")
+        : `<li class="empty">Nenhuma curtida ainda.</li>`;
+      s.posts.concat(s.liked).forEach((p) => { if (!findPost(p.id)) state.posts.push(p); });
+    } catch (e) { toast(e.message); }
   }
+
+  let profileDraftAvatar = null; // Blob | null
+  let signupAvatar = null; // Blob | null
 
   function openProfileEdit() {
     const u = state.user;
     if (!u) return;
-    profileDraftAvatar = u.avatar;
+    profileDraftAvatar = null;
     setAvatar($("#profile-avatar"), u);
     $("#profile-name").value = u.name;
     $("#profile-handle").value = u.handle;
     openSheet("sheet-profile");
   }
-  let profileDraftAvatar = null;
-  let signupAvatar = null;
 
-  function normalizeHandle(v) { return v.toLowerCase().replace(/^@/, "").replace(/[^a-z0-9_.]/g, ""); }
+  const normalizeHandle = (v) => v.toLowerCase().replace(/^@/, "").replace(/[^a-z0-9_.]/g, "");
 
-  function renderNotifications() {
+  async function openNotifications() {
+    openSheet("sheet-notifications");
+    if (!state.user) {
+      $("#notif-list").innerHTML = `<li class="empty">Crie sua conta para receber notificações.</li>`;
+      return;
+    }
+    await loadNotifications();
     $("#notif-list").innerHTML = state.notifications.length
-      ? state.notifications.map((n) => `<li><span class="meta"><b style="white-space:normal">${esc(n.text)}</b><span>${timeAgo(n.at)}</span></span></li>`).join("")
+      ? state.notifications.map((n) => `<li ${n.postId ? `data-post="${n.postId}"` : ""}><span class="meta"><b style="white-space:normal">${esc(n.text)}</b><span>${timeAgo(n.at)}</span></span></li>`).join("")
       : `<li class="empty">Sem notificações.</li>`;
-    state.notifications.forEach((n) => (n.read = true));
-    persist();
-    syncNotifDot();
+    if (state.notifications.some((n) => !n.read)) {
+      api("/notifications/read", { method: "POST" }).catch(() => {});
+      state.notifications.forEach((n) => (n.read = true));
+      syncNotifDot();
+    }
   }
-  function syncNotifDot() {
-    $("#notif-dot").classList.toggle("hidden", !state.notifications.some((n) => !n.read));
-  }
+  const syncNotifDot = () => $("#notif-dot").classList.toggle("hidden", !state.notifications.some((n) => !n.read));
+  const syncTabs = () => $$(".seg").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
 
-  function syncTabs() {
-    $$(".seg").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
+  function setSession(user, token) {
+    state.user = user;
+    if (token) { state.token = token; localStorage.setItem(TOKEN_KEY, token); }
+    connectLive();
+    loadPosts();
+    loadNotifications();
   }
 
   // ---------------- Eventos ----------------
@@ -660,14 +757,13 @@
       if (on) $("#search-input").focus();
       else { $("#search-input").value = ""; state.search = ""; renderMarkers(); }
     },
-    notifications: () => { renderNotifications(); openSheet("sheet-notifications"); },
+    notifications: openNotifications,
     list: openList,
     checkin: openCheckin,
     locate: async () => {
       try {
-        const pos = await getPosition();
-        state.myPos = pos;
-        map.setView(pos, 17);
+        state.myPos = await getPosition();
+        map.setView(state.myPos, 17);
       } catch (e) { toast(e.message); }
     },
     "close-post": closePost,
@@ -680,6 +776,7 @@
       renderMarkers();
       toast(`Rolês de ${p.author.name}`);
     },
+    follow: toggleFollow,
     like: toggleLike,
     comments: openComments,
     share: sharePost,
@@ -690,30 +787,37 @@
     "live-link": shareLiveLink,
     "edit-profile": openProfileEdit,
     logout: () => {
-      if (!confirm("Sair da conta? Seus check-ins neste aparelho serão apagados.")) return;
+      if (!confirm("Sair da conta? Como a conta não tem senha, você não conseguirá entrar nela de novo neste ou em outro aparelho.")) return;
       stopLive(true);
-      localStorage.removeItem(STORE_KEY);
-      location.reload();
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(LIVE_KEY);
+      location.href = "/";
     },
   };
 
-  document.addEventListener("click", (e) => {
+  document.addEventListener("click", async (e) => {
     const a = e.target.closest("[data-action]");
-    if (a && actions[a.dataset.action]) { e.preventDefault(); actions[a.dataset.action](); return; }
+    if (a && actions[a.dataset.action]) { e.preventDefault(); e.stopPropagation(); actions[a.dataset.action](); return; }
 
     const del = e.target.closest("[data-delete]");
     if (del) {
       e.stopPropagation();
       if (!confirm("Apagar este check-in?")) return;
-      state.myPosts = state.myPosts.filter((p) => p.id !== del.dataset.delete);
-      persist(); renderMember(); renderMarkers();
+      try {
+        await api(`/posts/${del.dataset.delete}`, { method: "DELETE" });
+        state.posts = state.posts.filter((p) => p.id !== del.dataset.delete);
+        renderMember(); renderMarkers();
+        toast("Check-in apagado.");
+      } catch (err) { toast(err.message); }
       return;
     }
 
     const item = e.target.closest("[data-post]");
     if (item) {
-      const p = findPost(item.dataset.post);
-      if (!p) return;
+      let p = findPost(item.dataset.post);
+      if (!p) {
+        try { p = (await api(`/posts/${item.dataset.post}`)).post; upsertPost(p); } catch (err) { toast(err.message); return; }
+      }
       if (!isActive(p)) { toast("Esse status já encerrou."); return; }
       closeSheets();
       if (!$("#screen-map").classList.contains("active")) show("screen-map");
@@ -732,13 +836,8 @@
     else if (state.selected) closePost();
   });
 
-  $$(".seg").forEach((b) => b.addEventListener("click", () => {
-    state.tab = b.dataset.tab;
-    syncTabs();
-    closePost();
-  }));
+  $$(".seg").forEach((b) => b.addEventListener("click", () => { state.tab = b.dataset.tab; syncTabs(); closePost(); }));
   $("#search-input").addEventListener("input", (e) => { state.search = e.target.value; renderMarkers(); });
-
   $("#ride-99").addEventListener("click", open99);
   $("#comment-form").addEventListener("submit", submitComment);
 
@@ -748,10 +847,12 @@
     if (!f) return;
     try {
       checkin.photo = await resizeImage(f);
+      if (checkin.preview) URL.revokeObjectURL(checkin.preview);
+      checkin.preview = URL.createObjectURL(checkin.photo);
       const prev = $("#checkin-preview");
-      prev.style.backgroundImage = `url("${checkin.photo}")`;
+      prev.style.backgroundImage = `url("${checkin.preview}")`;
       prev.classList.add("has-img");
-    } catch { toast("Não foi possível ler a foto."); }
+    } catch (err) { toast(err.message); }
     validateCheckin();
   });
   $("#checkin-stars").addEventListener("click", (e) => {
@@ -775,11 +876,11 @@
   // Localização em tempo real
   $("#live-visibility").addEventListener("click", (e) => {
     const b = e.target.closest(".chip-opt"); if (!b) return;
-    state.liveSettings.visibility = b.dataset.value; setChips("#live-visibility", b.dataset.value); persist();
+    state.liveSettings.visibility = b.dataset.value; setChips("#live-visibility", b.dataset.value); persistLive();
   });
   $("#live-duration").addEventListener("click", (e) => {
     const b = e.target.closest(".chip-opt"); if (!b) return;
-    state.liveSettings.duration = Number(b.dataset.value); setChips("#live-duration", b.dataset.value); persist();
+    state.liveSettings.duration = Number(b.dataset.value); setChips("#live-duration", b.dataset.value); persistLive();
   });
   $("#member-live-toggle").addEventListener("change", (e) => {
     if (e.target.checked) { initMap(); startLive(false); } else stopLive();
@@ -789,9 +890,9 @@
   $("#signup-photo").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      signupAvatar = await resizeImage(f, 300);
-      setAvatar($("#signup-avatar"), { name: $("#signup-name").value || "?", avatar: signupAvatar });
-    } catch { toast("Não foi possível ler a foto."); }
+      signupAvatar = await resizeImage(f, 400);
+      setAvatar($("#signup-avatar"), { name: $("#signup-name").value || "?", avatar: URL.createObjectURL(signupAvatar) });
+    } catch (err) { toast(err.message); }
   });
   $("#signup-name").addEventListener("input", (e) => {
     const h = $("#signup-handle");
@@ -801,66 +902,98 @@
     e.target.dataset.touched = "1";
     e.target.value = normalizeHandle(e.target.value);
   });
-  $("#signup-form").addEventListener("submit", (e) => {
+  $("#signup-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const name = $("#signup-name").value.trim();
-    const handle = normalizeHandle($("#signup-handle").value);
-    if (!name || !handle) return;
-    state.user = { name, handle, avatar: signupAvatar, createdAt: Date.now() };
-    state.notifications.unshift({ text: `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`, at: Date.now(), read: false });
-    persist();
-    syncNotifDot();
-    state.history = [];
-    show("screen-map");
-    toast(`Conta criada! Bem-vindo, @${handle}`);
-    const next = pendingAfterSignup;
-    pendingAfterSignup = null;
-    if (next === "checkin") setTimeout(openCheckin, 300);
-    else if (next === "live") setTimeout(openLiveSettings, 300);
-    else if (next === "member") show("screen-member");
+    const btn = e.submitter || $("#signup-form button[type=submit]");
+    btn.disabled = true;
+    try {
+      const { user, token } = await api("/users", {
+        method: "POST",
+        body: { name: $("#signup-name").value.trim(), handle: normalizeHandle($("#signup-handle").value) },
+      });
+      state.token = token;
+      localStorage.setItem(TOKEN_KEY, token);
+      let finalUser = user;
+      if (signupAvatar) {
+        try {
+          const avatar = await uploadPhoto(signupAvatar);
+          finalUser = (await api("/me", { method: "PATCH", body: { avatar } })).user;
+        } catch { toast("Conta criada, mas a foto não foi enviada. Tente em Editar perfil."); }
+      }
+      setSession(finalUser);
+      state.history = [];
+      show("screen-map");
+      toast(`Conta criada! Bem-vindo, @${finalUser.handle}`);
+      const next = pendingAfterSignup;
+      pendingAfterSignup = null;
+      if (next === "checkin") setTimeout(openCheckin, 300);
+      else if (next === "live") setTimeout(openLiveSettings, 300);
+      else if (next === "member") show("screen-member");
+    } catch (err) {
+      toast(err.message);
+    }
+    btn.disabled = false;
   });
 
   // Editar perfil
   $("#profile-photo").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      profileDraftAvatar = await resizeImage(f, 300);
-      setAvatar($("#profile-avatar"), { name: state.user.name, avatar: profileDraftAvatar });
-    } catch { toast("Não foi possível ler a foto."); }
+      profileDraftAvatar = await resizeImage(f, 400);
+      setAvatar($("#profile-avatar"), { name: state.user.name, avatar: URL.createObjectURL(profileDraftAvatar) });
+    } catch (err) { toast(err.message); }
   });
   $("#profile-handle").addEventListener("input", (e) => { e.target.value = normalizeHandle(e.target.value); });
-  $("#profile-form").addEventListener("submit", (e) => {
+  $("#profile-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    state.user.name = $("#profile-name").value.trim() || state.user.name;
-    state.user.handle = normalizeHandle($("#profile-handle").value) || state.user.handle;
-    state.user.avatar = profileDraftAvatar;
-    // Atualiza autoria dos próprios posts e comentários
-    state.myPosts.forEach((p) => (p.author = publicUser()));
-    Object.values(state.myComments).forEach((l) => l.forEach((c) => (c.author = publicUser())));
-    persist();
-    if (myLiveMarker) myLiveMarker.setIcon(liveIcon(publicUser(), true));
-    closeSheets();
-    renderMember();
-    renderMarkers();
-    toast("Perfil atualizado.");
+    try {
+      const patch = { name: $("#profile-name").value.trim(), handle: normalizeHandle($("#profile-handle").value) };
+      if (profileDraftAvatar) patch.avatar = await uploadPhoto(profileDraftAvatar);
+      state.user = (await api("/me", { method: "PATCH", body: patch })).user;
+      closeSheets();
+      renderMember();
+      connectLive(); // reconecta para o mapa ao vivo usar a nova foto/nome
+      loadPosts();
+      toast("Perfil atualizado.");
+    } catch (err) { toast(err.message); }
   });
 
   // Relógio: contagem do post e do compartilhamento ao vivo
   setInterval(() => { updateCountdown(); updateLiveTimer(); }, 1000);
+  // Novos rolês aparecem sozinhos
+  setInterval(() => { if (!document.hidden) loadPosts(); }, 30000);
+  setInterval(() => { if (!document.hidden) loadNotifications(); }, 60000);
 
   // ---------------- Início ----------------
-  syncNotifDot();
-  syncLiveUI();
-  const params = new URLSearchParams(location.search);
-  const deepLink = params.get("role");
-  if (state.user || deepLink) {
-    show("screen-map");
-    state.history = ["screen-welcome"];
-    if (deepLink && findPost(deepLink)) {
-      const p = findPost(deepLink);
-      state.tab = p.type === "event" ? "events" : "roles";
-      syncTabs(); renderMarkers();
-      setTimeout(() => openPost(deepLink), 300);
+  async function boot() {
+    syncLiveUI();
+    if (state.token) {
+      try {
+        state.user = (await api("/me")).user;
+      } catch (e) {
+        if (e.status === 401) { localStorage.removeItem(TOKEN_KEY); state.token = null; }
+      }
+    }
+    if (!state.user && state.live.active) { state.live = { active: false, until: 0 }; persistLive(); syncLiveUI(); }
+    connectLive();
+    await loadPosts();
+    loadNotifications();
+    if (state.user && state.live.active) startLive(true);
+
+    const deepLink = new URLSearchParams(location.search).get("role");
+    if (state.user || deepLink) {
+      show("screen-map");
+      state.history = ["screen-welcome"];
+      if (deepLink) {
+        let p = findPost(deepLink);
+        if (!p) { try { p = (await api(`/posts/${deepLink}`)).post; upsertPost(p); } catch { /* não existe */ } }
+        if (p && isActive(p)) {
+          state.tab = p.type === "event" ? "events" : "roles";
+          syncTabs(); renderMarkers();
+          setTimeout(() => openPost(p.id), 300);
+        } else toast("Esse rolê já encerrou.");
+      }
     }
   }
+  boot();
 })();

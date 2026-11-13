@@ -1,44 +1,109 @@
 # Rolê — descubra seu rolê pela cidade
 
-Protótipo web (mobile-first) do app **Rolê**. É HTML, CSS e JavaScript puro, sem etapa de build.
+App web (mobile-first) com backend na **Cloudflare**:
 
-## Como rodar
+| Parte | Serviço Cloudflare |
+| --- | --- |
+| Site (HTML/CSS/JS em `public/`) | Workers Static Assets |
+| API (`src/index.js`) | Workers |
+| Banco de dados (usuários, posts, curtidas, comentários, amigos, notificações) | D1 (SQLite) |
+| Fotos dos rolês e avatares | R2 |
+| Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
+
+## Rodar no computador
+
+Requer Node.js 18 ou mais novo.
 
 ```bash
-python3 -m http.server 8080
+npm install
 ```
 
-Depois abra `http://localhost:8080` no navegador. No computador, use o modo celular do DevTools. A geolocalização só funciona em `localhost` ou em HTTPS.
+```bash
+npm run db:migrate:local
+```
 
-## Telas e funcionalidades
+```bash
+npm run db:seed:local
+```
 
-- **Boas-vindas**: logo ROLÊ, "descubra seu rolê pela cidade", botões **Descubra** e **Criar Nova Conta**.
-- **Criar conta instantânea**: foto, nome e @usuário. Não pede e-mail nem senha.
-- **Mapa** (Centro de Curitiba):
-  - pins redondos com borda amarela mostram a foto de quem postou;
-  - abas **Rolês** (status de pessoas) e **Eventos** (pins quadrados);
-  - busca por rolê, lugar ou @pessoa;
-  - notificações;
-  - botões **Lista** (ordenada por distância) e **+ Check-in**.
-- **Post do rolê** (card sobre o mapa):
-  - @ e foto de quem postou no canto superior esquerdo, horário do post e foto do evento;
-  - selo GRÁTIS/PAGO, título, descrição e nota de 1 a 5 estrelas dada por quem postou;
-  - localização automática, contagem do tempo restante do status;
-  - curtir, comentar, compartilhar e **Ir até o rolê**.
-- **Ir até o rolê**: abre o **Uber** com o destino já preenchido, o **99** ou a rota no Google Maps.
-- **Check-in**: foto, nome do rolê, descrição, avaliação, grátis/pago e tempo de exibição (1h, 3h ou 6h). A **localização vem do GPS e não pode ser editada**. O endereço é obtido pelo OpenStreetMap/Nominatim.
+```bash
+npm run dev
+```
+
+Depois abra http://localhost:8787. O `db:seed:local` cria rolês e eventos de demonstração no Centro de Curitiba. Rode de novo para renovar os horários.
+
+## Publicar na Cloudflare
+
+1. Crie uma conta gratuita em https://dash.cloudflare.com e entre pelo terminal:
+
+   ```bash
+   npx wrangler login
+   ```
+
+2. Crie o banco D1. O comando mostra um `database_id`; copie e cole esse valor no lugar de `COLE_AQUI_O_ID_DO_D1` em `wrangler.jsonc`:
+
+   ```bash
+   npx wrangler d1 create role-db
+   ```
+
+3. Crie o bucket R2 para as fotos. O R2 precisa ser ativado uma vez no painel; ele tem cota gratuita.
+
+   ```bash
+   npx wrangler r2 bucket create role-media
+   ```
+
+4. Crie as tabelas no banco de produção. O seed com dados de demonstração é opcional:
+
+   ```bash
+   npm run db:migrate:remote
+   ```
+
+   ```bash
+   npm run db:seed:remote
+   ```
+
+5. Publique:
+
+   ```bash
+   npm run deploy
+   ```
+
+   O app fica em `https://role.<sua-conta>.workers.dev`. Um domínio próprio pode ser ligado no painel, em Workers → role → Settings → Domains.
+
+## API
+
+| Método | Rota | O que faz |
+| --- | --- | --- |
+| POST | `/api/users` | Conta instantânea (`name`, `handle`). Devolve `token`. |
+| GET / PATCH | `/api/me` | Ver ou editar o perfil (`name`, `handle`, `avatar`). |
+| GET | `/api/me/summary` | Área do membro: estatísticas, meus check-ins, rolês curtidos. |
+| POST | `/api/uploads` | Envia uma foto (JPG, PNG ou WebP, até 5 MB) para o R2. |
+| GET | `/api/media/*` | Serve as fotos do R2. |
+| GET | `/api/geocode?lat&lng` | Endereço do ponto (OpenStreetMap/Nominatim, com cache). |
+| GET / POST | `/api/posts` | Lista os rolês ativos / faz check-in. |
+| GET / DELETE | `/api/posts/:id` | Ver um rolê / apagar o seu. |
+| POST / DELETE | `/api/posts/:id/like` | Curtir ou descurtir. |
+| GET / POST | `/api/posts/:id/comments` | Ver ou enviar comentários. |
+| POST / DELETE | `/api/users/:id/follow` | Seguir (adicionar amigo) ou deixar de seguir. |
+| GET | `/api/notifications` | Lista as notificações. |
+| POST | `/api/notifications/read` | Marca as notificações como lidas. |
+| GET (WebSocket) | `/api/live?token=` | Localização em tempo real. |
+
+A autenticação usa `Authorization: Bearer <token>`. No banco fica só o hash SHA-256 do token.
+
+## Regras importantes
+
+- **A localização do check-in é automática.** O app manda as coordenadas do GPS e o **endereço é calculado no servidor**, então não dá para digitar um lugar falso. O servidor também só aceita fotos enviadas pela própria pessoa.
 - **Localização em tempo real**:
-  - escolha quem vê (Amigos ou Todos) e por quanto tempo (15 min, 1h, 8h ou até desligar);
-  - sua posição se atualiza no mapa enquanto você se move;
-  - um banner "Ao vivo" mostra o tempo restante, com botões para ajustar ou parar;
-  - opção de enviar um link para alguém;
-  - amigos que estão compartilhando aparecem com o selo AO VIVO.
-- **Área do membro**: perfil com estatísticas, interruptor da localização em tempo real, meus check-ins (com opção de apagar), rolês que curti, editar perfil e sair da conta.
-- **Menu lateral**: atalhos para todas as áreas acima.
+  - "**Amigos**" são as pessoas que você segue; só elas veem você. "**Todos**" deixa qualquer pessoa ver, inclusive quem não tem conta.
+  - O compartilhamento termina no prazo escolhido, quando você toca em Parar ou quando fecha o app.
+  - Visitantes sem conta só podem ver, não podem compartilhar.
+- **Eventos** (aba Eventos) por enquanto são cadastrados direto no banco (veja `seed/seed.sql`). Pelo app, as pessoas postam rolês.
 
-## Limitações do protótipo
+## Limitações conhecidas
 
-- **Sem servidor**: conta, check-ins, curtidas e comentários ficam salvos só no aparelho (`localStorage`). As outras pessoas e eventos do mapa são dados de demonstração (`data.js`).
-- **Localização em tempo real**: por enquanto ela só aparece no seu próprio mapa. Para outras pessoas verem de verdade, é preciso um backend com WebSocket ou Firebase. O "enviar link" manda a posição atual, não um link que acompanha você ao vivo.
-- **99**: o link `taxis99://call?...` não está documentado oficialmente. Se o app não abrir, o protótipo leva para a loja de aplicativos ou para o site da 99. O link do Uber (`m.uber.com/ul`) segue a documentação oficial.
-- **Fotos de demonstração** vêm de picsum.photos e pravatar.cc. **Mapa**: OpenStreetMap + CARTO.
+- **A conta não tem senha nem e-mail.** O acesso fica salvo só no aparelho; se a pessoa sair da conta ou limpar o navegador, não tem como entrar de novo. Vale adicionar login por telefone ou e-mail antes de lançar.
+- **Não há limite de requisições** contra spam. Dá para ativar Rate Limiting no painel da Cloudflare ou usar o binding `ratelimit`.
+- **No celular, o navegador pausa o GPS quando o app vai para segundo plano.** Para compartilhar em segundo plano de verdade, é preciso um app nativo ou PWA.
+- **O link do 99** (`taxis99://call?...`) não é documentado oficialmente. Se não abrir, o app leva para a loja ou para o site da 99. O link do Uber segue a documentação oficial.
+- **Um único Durable Object atende a cidade inteira.** Isso aguenta milhares de conexões; para escalar mais, dá para dividir por região.
