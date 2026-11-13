@@ -1,0 +1,8 @@
+# Copie para .dev.vars para rodar localmente.
+# Modo de desenvolvimento: o código do SMS aparece na tela e no terminal (nenhum SMS é enviado).
+OTP_DEV_MODE="true"
+
+# Para testar com SMS de verdade localmente, remova a linha acima e preencha:
+# TWILIO_ACCOUNT_SID="AC..."
+# TWILIO_AUTH_TOKEN="..."
+# TWILIO_VERIFY_SID="VA..."
