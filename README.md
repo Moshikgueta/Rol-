@@ -11,6 +11,18 @@ App web (mobile-first) com backend na **Cloudflare**:
 | Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
 | Login por celular (código por SMS ou WhatsApp) | Twilio Verify (`src/otp.js`) |
 
+## Versão de demonstração (GitHub Pages)
+
+A cada atualização da `main`, o workflow `.github/workflows/pages.yml` publica uma versão de demonstração em https://moshikgueta.github.io/Rol-/. Essa versão não usa servidor:
+
+- **O que você posta fica só no seu navegador.** Ninguém mais vê, e nada é enviado para servidor nenhum.
+- **O código de login aparece na tela**, sem SMS nem WhatsApp.
+- **Os amigos "ao vivo" são simulados.**
+
+Ela usa `public/demo.js`, que imita a API dentro do navegador. O modo demonstração liga sozinho quando o site está num endereço `github.io` (veja `public/config.js`).
+
+Para ativar o GitHub Pages pela primeira vez: no repositório, abra **Settings → Pages** e, em **Build and deployment → Source**, escolha **GitHub Actions**. O endereço fica https://moshikgueta.github.io/Rol-/. A opção **Deploy from a branch** (`main`, pasta raiz) também funciona: o `index.html` da raiz abre o app em https://moshikgueta.github.io/Rol-/public/.
+
 ## Rodar no computador
 
 Requer Node.js 18 ou mais novo.

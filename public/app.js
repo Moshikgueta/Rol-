@@ -29,6 +29,7 @@
 
   // ---------------- API ----------------
   async function api(path, { method = "GET", body, raw, contentType } = {}) {
+    if (window.RoleDemo) return window.RoleDemo.request(path, { method, body, raw, token: state.token });
     const headers = {};
     if (state.token) headers.authorization = "Bearer " + state.token;
     if (body !== undefined) headers["content-type"] = "application/json";
@@ -398,7 +399,7 @@
   async function sharePost() {
     const p = findPost(state.selected);
     if (!p) return;
-    const url = `${location.origin}/?role=${enc(p.id)}`;
+    const url = `${location.origin}${location.pathname}?role=${enc(p.id)}`;
     const data = { title: `Rolê: ${p.title}`, text: `${p.title} — ${p.place}`, url };
     try {
       if (navigator.share) await navigator.share(data);
@@ -544,7 +545,7 @@
     if (ws) { ws.onclose = null; ws.close(); }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const q = state.token ? `?token=${enc(state.token)}` : "";
-    ws = new WebSocket(`${proto}://${location.host}/api/live${q}`);
+    ws = window.RoleDemo ? new window.RoleDemo.DemoLive(state.token) : new WebSocket(`${proto}://${location.host}/api/live${q}`);
     ws.onopen = () => {
       wsRetry = 0;
       if (state.live.active) { sendLiveStart(); sendMyPos(); }
@@ -1082,7 +1083,7 @@
     try { await api(path, { method: "DELETE" }); } catch { /* sai localmente mesmo assim */ }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(LIVE_KEY);
-    location.href = "/";
+    location.href = location.pathname;
   }
 
   // Editar perfil
@@ -1116,6 +1117,7 @@
 
   // ---------------- Início ----------------
   async function boot() {
+    if (window.RoleDemo) $("#demo-note").classList.remove("hidden");
     syncLiveUI();
     if (state.token) {
       try {
