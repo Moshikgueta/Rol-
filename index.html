@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#D9AE1C" />
+  <title>Rolê — descubra seu rolê pela cidade</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ BOAS-VINDAS ============ -->
+  <section id="screen-welcome" class="screen screen-yellow active">
+    <div class="welcome-center">
+      <h1 class="brand">ROLÊ</h1>
+      <p class="tagline">descubra seu rolê pela cidade</p>
+    </div>
+    <div class="welcome-actions">
+      <button class="btn btn-dark" data-action="discover">Descubra</button>
+      <button class="btn btn-white" data-action="signup">Criar Nova Conta</button>
+    </div>
+  </section>
+
+  <!-- ============ CRIAR CONTA ============ -->
+  <section id="screen-signup" class="screen screen-yellow">
+    <button class="round-btn back" data-action="back" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
+    <h2 class="brand brand-sm">ROLÊ</h2>
+    <form id="signup-form" class="signup-form">
+      <label class="avatar-picker">
+        <input type="file" id="signup-photo" accept="image/*" hidden />
+        <span id="signup-avatar" class="avatar avatar-xl"><svg><use href="#i-camera"/></svg></span>
+        <span class="small">Adicionar foto</span>
+      </label>
+      <input id="signup-name" class="input" type="text" required maxlength="40" placeholder="Seu nome" autocomplete="name" />
+      <div class="input-prefix"><span>@</span><input id="signup-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]+" placeholder="usuario" autocapitalize="off" /></div>
+      <p class="small center">É instantâneo: sem e-mail, sem senha. Seus dados ficam neste aparelho.</p>
+      <button type="submit" class="btn btn-white">Criar Nova Conta</button>
+    </form>
+  </section>
+
+  <!-- ============ MAPA ============ -->
+  <section id="screen-map" class="screen">
+    <div id="map"></div>
+
+    <header class="map-top">
+      <button class="round-btn" data-action="menu" aria-label="Menu"><svg><use href="#i-menu"/></svg></button>
+      <div class="pill-bar">
+        <button class="pill-search" data-action="search" aria-label="Buscar"><svg><use href="#i-search"/></svg></button>
+        <input id="search-input" class="search-input" type="search" placeholder="Buscar rolê, lugar, @pessoa" />
+        <div class="segmented" role="tablist">
+          <button class="seg active" data-tab="roles" role="tab">Rolês</button>
+          <button class="seg" data-tab="events" role="tab">Eventos</button>
+        </div>
+      </div>
+      <button class="round-btn" data-action="notifications" aria-label="Notificações">
+        <svg><use href="#i-bell"/></svg><span id="notif-dot" class="dot hidden"></span>
+      </button>
+    </header>
+
+    <div id="live-banner" class="live-banner hidden">
+      <span class="live-dot"></span>
+      <span>Ao vivo · <b id="live-timer">--</b></span>
+      <button data-action="live-settings">Ajustar</button>
+      <button data-action="live-stop" class="stop">Parar</button>
+    </div>
+
+    <button id="btn-locate" class="round-btn locate" data-action="locate" aria-label="Minha localização"><svg><use href="#i-target"/></svg></button>
+
+    <div class="map-bottom">
+      <button class="btn btn-yellow btn-float" data-action="list"><svg><use href="#i-list"/></svg> Lista</button>
+      <button class="btn btn-white btn-float" data-action="checkin"><svg><use href="#i-plus"/></svg> Check-in</button>
+    </div>
+
+    <!-- Card do rolê (sobre o mapa) -->
+    <div id="post-view" class="post-view" aria-hidden="true">
+      <button class="round-btn back" data-action="close-post" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
+      <article class="post-card">
+        <div class="post-photo" id="post-photo">
+          <div class="chip chip-user" data-action="open-author">
+            <img id="post-avatar" alt="" />
+            <span id="post-handle"></span>
+          </div>
+          <div class="chip chip-time" id="post-time"></div>
+          <div class="badge" id="post-price"></div>
+        </div>
+        <div class="post-info">
+          <div class="row between">
+            <h3 id="post-title"></h3>
+            <span class="rating" id="post-rating" title="Avaliação de quem postou"><svg><use href="#i-star"/></svg><b></b></span>
+          </div>
+          <p id="post-description" class="post-desc"></p>
+          <div class="row between">
+            <span class="loc" title="Localização automática (GPS) — não editável"><svg><use href="#i-pin"/></svg><span id="post-location"></span></span>
+            <span class="countdown" id="post-countdown" title="Tempo restante do status"></span>
+          </div>
+          <div class="row between actions">
+            <div class="icons">
+              <button class="icon-btn" id="btn-like" data-action="like" aria-label="Curtir"><svg><use href="#i-heart"/></svg><span id="like-count"></span></button>
+              <button class="icon-btn" data-action="comments" aria-label="Comentar"><svg><use href="#i-comment"/></svg><span id="comment-count"></span></button>
+              <button class="icon-btn" data-action="share" aria-label="Compartilhar"><svg><use href="#i-share"/></svg></button>
+            </div>
+            <button class="btn btn-yellow btn-go" data-action="go">Ir até o rolê</button>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ ÁREA DO MEMBRO ============ -->
+  <section id="screen-member" class="screen screen-light">
+    <header class="member-header">
+      <button class="round-btn back" data-action="back-map" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
+      <span id="member-avatar" class="avatar avatar-xl"></span>
+      <h2 id="member-name"></h2>
+      <p id="member-handle" class="muted"></p>
+      <div class="stats">
+        <div><b id="stat-checkins">0</b><span>check-ins</span></div>
+        <div><b id="stat-likes">0</b><span>curtidas</span></div>
+        <div><b id="stat-comments">0</b><span>comentários</span></div>
+      </div>
+    </header>
+
+    <div class="member-body">
+      <div class="card">
+        <div class="row between">
+          <div>
+            <h4>Localização em tempo real</h4>
+            <p class="muted small" id="member-live-status">Desligada</p>
+          </div>
+          <label class="switch"><input type="checkbox" id="member-live-toggle" /><span></span></label>
+        </div>
+        <button class="link" data-action="live-settings">Configurar quem vê e por quanto tempo</button>
+      </div>
+
+      <h4 class="section-title">Meus check-ins</h4>
+      <ul id="my-posts" class="list"></ul>
+
+      <h4 class="section-title">Rolês que curti</h4>
+      <ul id="my-likes" class="list"></ul>
+
+      <h4 class="section-title">Conta</h4>
+      <div class="card menu">
+        <button data-action="edit-profile">Editar perfil</button>
+        <button data-action="notifications">Notificações</button>
+        <button data-action="logout" class="danger">Sair da conta</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MENU LATERAL ============ -->
+  <div id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <span id="drawer-avatar" class="avatar avatar-lg"></span>
+        <div>
+          <b id="drawer-name">Visitante</b>
+          <p id="drawer-handle" class="small">Crie sua conta para postar</p>
+        </div>
+      </div>
+      <nav>
+        <button data-action="member"><svg><use href="#i-user"/></svg> Área do membro</button>
+        <button data-action="live-settings"><svg><use href="#i-live"/></svg> Localização em tempo real</button>
+        <button data-action="list"><svg><use href="#i-list"/></svg> Rolês perto de mim</button>
+        <button data-action="notifications"><svg><use href="#i-bell"/></svg> Notificações</button>
+        <button data-action="checkin"><svg><use href="#i-plus"/></svg> Fazer check-in</button>
+      </nav>
+      <button id="drawer-auth" class="btn btn-yellow" data-action="signup">Criar Nova Conta</button>
+    </div>
+  </div>
+
+  <!-- ============ SHEETS ============ -->
+  <div id="sheet-backdrop" class="backdrop"></div>
+
+  <!-- Lista -->
+  <div id="sheet-list" class="sheet">
+    <div class="grabber"></div>
+    <h3 id="list-title">Rolês perto de você</h3>
+    <ul id="list-items" class="list"></ul>
+  </div>
+
+  <!-- Comentários -->
+  <div id="sheet-comments" class="sheet">
+    <div class="grabber"></div>
+    <h3>Comentários</h3>
+    <ul id="comment-list" class="comments"></ul>
+    <form id="comment-form" class="comment-form">
+      <input id="comment-input" class="input" type="text" placeholder="Comente algo..." maxlength="200" required />
+      <button type="submit" class="btn btn-yellow btn-sm">Enviar</button>
+    </form>
+  </div>
+
+  <!-- Ir até o rolê -->
+  <div id="sheet-ride" class="sheet">
+    <div class="grabber"></div>
+    <h3>Ir até o rolê</h3>
+    <p id="ride-destination" class="muted"></p>
+    <a id="ride-uber" class="btn ride ride-uber" target="_blank" rel="noopener">Pedir Uber</a>
+    <a id="ride-99" class="btn ride ride-99">Pedir 99</a>
+    <a id="ride-maps" class="btn btn-ghost" target="_blank" rel="noopener">Ver rota no mapa</a>
+  </div>
+
+  <!-- Check-in -->
+  <div id="sheet-checkin" class="sheet sheet-tall">
+    <div class="grabber"></div>
+    <h3>Fazer check-in</h3>
+    <form id="checkin-form" class="form">
+      <label class="photo-picker">
+        <input type="file" id="checkin-photo" accept="image/*" capture="environment" hidden />
+        <div id="checkin-preview" class="photo-preview"><svg><use href="#i-camera"/></svg><span>Foto do rolê</span></div>
+      </label>
+      <input id="checkin-title" class="input" type="text" maxlength="60" required placeholder="Nome do rolê (ex.: Samba na praça)" />
+      <textarea id="checkin-desc" class="input" rows="3" maxlength="280" placeholder="Como está o rolê?"></textarea>
+      <div class="loc-readonly">
+        <svg><use href="#i-pin"/></svg>
+        <span id="checkin-location">Obtendo sua localização...</span>
+        <svg class="lock"><use href="#i-lock"/></svg>
+      </div>
+      <p class="small muted">A localização vem do GPS e não pode ser alterada.</p>
+      <div class="field">
+        <span>Sua avaliação do lugar</span>
+        <div id="checkin-stars" class="stars-input"></div>
+      </div>
+      <div class="field">
+        <span>Entrada</span>
+        <div class="chips" id="checkin-price">
+          <button type="button" class="chip-opt active" data-value="free">Grátis</button>
+          <button type="button" class="chip-opt" data-value="paid">Pago</button>
+        </div>
+      </div>
+      <div class="field">
+        <span>Status visível por</span>
+        <div class="chips" id="checkin-duration">
+          <button type="button" class="chip-opt" data-value="60">1h</button>
+          <button type="button" class="chip-opt active" data-value="180">3h</button>
+          <button type="button" class="chip-opt" data-value="360">6h</button>
+        </div>
+      </div>
+      <button type="submit" id="checkin-submit" class="btn btn-yellow" disabled>Postar check-in</button>
+    </form>
+  </div>
+
+  <!-- Localização em tempo real -->
+  <div id="sheet-live" class="sheet">
+    <div class="grabber"></div>
+    <h3>Localização em tempo real</h3>
+    <p class="muted small">Enquanto estiver ligada, sua posição aparece no mapa e se atualiza conforme você se move.</p>
+    <div class="field">
+      <span>Quem pode ver</span>
+      <div class="chips" id="live-visibility">
+        <button type="button" class="chip-opt active" data-value="friends">Amigos</button>
+        <button type="button" class="chip-opt" data-value="all">Todos</button>
+      </div>
+    </div>
+    <div class="field">
+      <span>Por quanto tempo</span>
+      <div class="chips" id="live-duration">
+        <button type="button" class="chip-opt" data-value="15">15 min</button>
+        <button type="button" class="chip-opt active" data-value="60">1 hora</button>
+        <button type="button" class="chip-opt" data-value="480">8 horas</button>
+        <button type="button" class="chip-opt" data-value="0">Até eu desligar</button>
+      </div>
+    </div>
+    <button id="live-start" class="btn btn-yellow" data-action="live-start">Começar a compartilhar</button>
+    <button id="live-share-link" class="btn btn-ghost hidden" data-action="live-link">Enviar link para alguém</button>
+    <button id="live-stop-btn" class="btn btn-ghost danger hidden" data-action="live-stop">Parar de compartilhar</button>
+  </div>
+
+  <!-- Notificações -->
+  <div id="sheet-notifications" class="sheet">
+    <div class="grabber"></div>
+    <h3>Notificações</h3>
+    <ul id="notif-list" class="list"></ul>
+  </div>
+
+  <!-- Editar perfil -->
+  <div id="sheet-profile" class="sheet">
+    <div class="grabber"></div>
+    <h3>Editar perfil</h3>
+    <form id="profile-form" class="form">
+      <label class="avatar-picker">
+        <input type="file" id="profile-photo" accept="image/*" hidden />
+        <span id="profile-avatar" class="avatar avatar-xl"></span>
+        <span class="small">Trocar foto</span>
+      </label>
+      <input id="profile-name" class="input" type="text" required maxlength="40" />
+      <div class="input-prefix"><span>@</span><input id="profile-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]+" /></div>
+      <button type="submit" class="btn btn-yellow">Salvar</button>
+    </form>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+
+<!-- Ícones -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 6h18M6 12h12M9 18h6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-9.2-8.6C1.2 8.2 3.3 4.5 6.8 4.5c2.1 0 3.4 1.2 5.2 3 1.8-1.8 3.1-3 5.2-3 3.5 0 5.6 3.7 4 6.9C19 15.6 12 20 12 20z" fill="var(--fill,none)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-comment" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4A8 8 0 1 1 20 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="m8.3 10.7 7.4-4.4m-7.4 7 7.4 4.4" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2 6.4 20.2l1.1-6.3L2.9 9.5l6.3-.9z" fill="currentColor"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.3 7-12a7 7 0 0 0-14 0c0 5.7 7 12 7 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4m8.4 0a6 6 0 0 0 0-8.4M4.9 4.9a10 10 0 0 0 0 14.2m14.2 0a10 10 0 0 0 0-14.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
