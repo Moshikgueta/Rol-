@@ -9,7 +9,8 @@ App web (mobile-first) com backend na **Cloudflare**:
 | Banco de dados (usuários, posts, curtidas, comentários, amigos, notificações) | D1 (SQLite) |
 | Fotos dos rolês e avatares | R2 |
 | Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
-| Login com Google (grátis) | Google Identity Services (`src/google.js`) |
+| Login com @ e senha (grátis, sempre ligado) | Workers + D1 (`src/password.js`) |
+| Login com Google (grátis, opcional) | Google Identity Services (`src/google.js`) |
 | Login por celular (código por SMS ou WhatsApp, pago, opcional) | Twilio Verify (`src/otp.js`) |
 
 ## Versão de demonstração (GitHub Pages)
@@ -119,6 +120,19 @@ Depois abra http://localhost:8787. No computador o login roda em **modo de teste
 
    O app fica em `https://role.<sua-conta>.workers.dev`. Um domínio próprio pode ser ligado no painel, em Workers → role → Settings → Domains.
 
+## Login com @ e senha
+
+É a forma principal de entrar e não depende de nenhum serviço pago:
+
+- **Criar conta:** nome, @ e senha (mínimo de 8 caracteres). A pessoa já entra na hora.
+- **Já tenho conta:** @ e senha.
+- **Como a senha é guardada:** com PBKDF2-SHA256, 100.000 iterações e salt aleatório. A senha nunca fica em texto.
+- **Limites contra abuso:**
+  - 10 senhas erradas por @ e 30 por rede (IP) a cada 15 minutos;
+  - 10 contas novas por rede a cada hora.
+- **Errar o @ ou a senha** mostra a mesma mensagem, para não revelar quais @ existem.
+- **Na área do membro** dá para trocar a senha, ou criar uma, para quem entrou com Google ou celular.
+
 ## Entrar com Google (grátis)
 
 1. Abra https://console.cloud.google.com e crie um projeto (por exemplo "Role").
@@ -144,6 +158,9 @@ Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e conf
 | Método | Rota | O que faz |
 | --- | --- | --- |
 | GET | `/api/auth/channels` | Formas de envio disponíveis: `{ sms, whatsapp }`. |
+| POST | `/api/auth/register` | Cria a conta com nome, @ e senha (`name`, `handle`, `password`). Devolve `token`. |
+| POST | `/api/auth/login` | Entra com @ e senha (`handle`, `password`). Devolve `token`. |
+| POST | `/api/me/password` | Cria ou troca a senha (`current`, `password`). |
 | POST | `/api/auth/google` | Confere o login com Google (`credential`). Conta existente: devolve `token`; conta nova: devolve `signupTicket` e sugestões de nome, @ e foto. |
 | POST | `/api/auth/send` | Envia o código (`phone`, `channel`: `"sms"` ou `"whatsapp"`). |
 | POST | `/api/auth/verify` | Confere o código (`phone`, `code`). Conta existente: devolve `token`; número novo: devolve `signupTicket`. |
@@ -182,6 +199,8 @@ A autenticação usa `Authorization: Bearer <token>`. Cada aparelho tem a sua se
 
 ## Limitações conhecidas
 
+- **Ainda não dá para recuperar a senha esquecida**, porque o app não pede e-mail. Para isso seria preciso enviar e-mail, o que exige um domínio próprio.
+- **No plano grátis do Workers**, cada requisição tem pouco tempo de processamento, e conferir a senha usa boa parte desse tempo. Se o login começar a falhar com muitos acessos, vale passar para o plano pago (5 dólares por mês).
 - **Contas criadas antes do login por celular** continuam funcionando no aparelho onde foram criadas, mas não têm número ligado a elas.
 - **O limite contra abuso cobre só o envio de códigos.** Posts e comentários ainda não têm limite; dá para ativar Rate Limiting no painel da Cloudflare.
 - **Cada verificação do Twilio Verify tem custo**, seja por SMS ou WhatsApp (centavos de dólar por verificação).

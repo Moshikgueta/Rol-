@@ -55,7 +55,7 @@
   if (!db || Date.now() - db.seededAt > 6 * 60 * MIN) {
     const fresh = seed();
     if (db) {
-      const mine = (u) => !u.id.startsWith("u_") || u.phone;
+      const mine = (u) => !u.id.startsWith("u_") || u.phone || u.pw;
       fresh.users.push(...db.users.filter(mine));
       fresh.posts.push(...db.posts.filter((p) => !p.user_id.startsWith("u_") || fresh.users.find((u) => u.id === p.user_id && u.phone)));
       Object.assign(fresh, { sessions: db.sessions, follows: db.follows, notifications: db.notifications });
@@ -71,7 +71,7 @@
   // ---------------- Helpers ----------------
   const userById = (id) => db.users.find((u) => u.id === id);
   const pub = (u) => u && { id: u.id, name: u.name, handle: u.handle, avatar: u.avatar };
-  const self = (u) => u && { ...pub(u), phone: u.phone };
+  const self = (u) => u && { ...pub(u), phone: u.phone, hasPassword: !!u.pw };
   function me(token, required = true) {
     const u = token && userById(db.sessions[token]);
     if (!u && required) throw new HttpError(401, "Faça login para continuar.");
@@ -143,7 +143,46 @@
     routes.push({ method, re, keys, fn });
   };
 
-  route("GET", "/auth/channels", () => ({ sms: true, whatsapp: true }));
+  route("GET", "/auth/channels", () => ({ sms: true, whatsapp: true, password: true }));
+
+  // Senhas na demonstração: SHA-256 com salt, só neste navegador.
+  async function pwHash(pw, salt) {
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + ":" + pw));
+    return salt + "$" + [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  const checkPw = (pw) => {
+    if (typeof pw !== "string" || pw.length < 8) throw new HttpError(400, "A senha precisa ter pelo menos 8 caracteres.");
+    return pw;
+  };
+  route("POST", "/auth/register", async ({ body }) => {
+    const name = text(body.name, "nome", 1, 40);
+    const handle = normalizeHandle(body.handle);
+    const pw = checkPw(body.password);
+    if (db.users.some((u) => u.handle === handle)) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
+    const u = { id: rid("me"), name, handle, avatar: null, phone: null, pw: await pwHash(pw, rid("salt")) };
+    db.users.push(u);
+    const token = rid("t");
+    db.sessions[token] = u.id;
+    notify(u.id, null, `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`);
+    save();
+    return { user: self(u), token };
+  });
+  route("POST", "/auth/login", async ({ body }) => {
+    const handle = String(body.handle || "").toLowerCase().replace(/^@/, "");
+    const u = db.users.find((x) => x.handle === handle);
+    if (!u || !u.pw || (await pwHash(String(body.password || ""), u.pw.split("$")[0])) !== u.pw) throw new HttpError(401, "@ ou senha incorretos.");
+    const token = rid("t");
+    db.sessions[token] = u.id;
+    save();
+    return { token, user: self(u) };
+  });
+  route("POST", "/me/password", async ({ token, body }) => {
+    const u = me(token);
+    if (u.pw && (await pwHash(String(body.current || ""), u.pw.split("$")[0])) !== u.pw) throw new HttpError(401, "A senha atual está incorreta.");
+    u.pw = await pwHash(checkPw(body.password), rid("salt"));
+    save();
+    return { ok: true };
+  });
   route("POST", "/auth/send", ({ body }) => {
     const phone = normalizePhone(body.phone);
     const last = db.codes[phone];
