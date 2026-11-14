@@ -28,10 +28,19 @@
     </div>
   </section>
 
-  <!-- ============ ENTRAR / CRIAR CONTA (telefone) ============ -->
+  <!-- ============ ENTRAR / CRIAR CONTA ============ -->
   <section id="screen-signup" class="screen screen-yellow">
     <button class="round-btn back" data-action="auth-back" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
     <h2 class="brand brand-sm">ROLÊ</h2>
+
+    <!-- Passo 0: escolher como entrar -->
+    <div id="choose-form" class="signup-form auth-step">
+      <h3 class="auth-title">Entre no Rolê</h3>
+      <p class="small center">Na primeira vez, você só escolhe o seu @.</p>
+      <div id="google-btn" class="google-btn" aria-label="Entrar com Google"></div>
+      <button type="button" class="btn btn-white hidden" id="use-phone-btn" data-action="auth-use-phone">Entrar com celular</button>
+      <p id="login-off" class="small center hidden">O login ainda não está disponível. Você já pode explorar o mapa em Descubra.</p>
+    </div>
 
     <!-- Passo 1: telefone -->
     <form id="phone-form" class="signup-form auth-step active">
@@ -64,7 +73,7 @@
       <button type="button" id="switch-channel" class="link-light center hidden"></button>
     </form>
 
-    <!-- Passo 3: perfil (só para número novo) -->
+    <!-- Passo 3: perfil (só para conta nova) -->
     <form id="signup-form" class="signup-form auth-step">
       <h3 class="auth-title">Crie seu perfil</h3>
       <label class="avatar-picker">

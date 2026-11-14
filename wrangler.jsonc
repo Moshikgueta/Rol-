@@ -10,5 +10,7 @@
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "role-media" }],
   "durable_objects": { "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
+  // Client ID do "Entrar com Google" (é público; não é segredo). Vazio = botão do Google escondido.
+  "vars": { "GOOGLE_CLIENT_ID": "" },
   "observability": { "enabled": true }
 }

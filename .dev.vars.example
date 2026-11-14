@@ -6,3 +6,7 @@ OTP_DEV_MODE="true"
 # TWILIO_ACCOUNT_SID="AC..."
 # TWILIO_AUTH_TOKEN="..."
 # TWILIO_VERIFY_SID="VA..."
+
+# Entrar com Google: o Client ID também fica em wrangler.jsonc ("vars").
+# Para testar localmente, autorize http://localhost:8787 como origem no Google Cloud.
+# GOOGLE_CLIENT_ID="1234567890-abc.apps.googleusercontent.com"
