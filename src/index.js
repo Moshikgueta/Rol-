@@ -2,6 +2,7 @@
 export { LiveHub } from "./live.js";
 import { HttpError, json, sha256, randomToken } from "./util.js";
 import { normalizePhone, sendCode, checkCode, availableChannels } from "./otp.js";
+import { verifyGoogleIdToken } from "./google.js";
 
 const MIN = 60 * 1000;
 const DURATIONS = [60, 180, 360];
@@ -40,7 +41,7 @@ function ownMediaUrl(url, user, { optional = false } = {}) {
 
 const publicUser = (u) => u && { id: u.id, name: u.name, handle: u.handle, avatar: u.avatar_url };
 // Dados que só a própria pessoa vê
-const selfUser = (u) => u && { ...publicUser(u), phone: u.phone };
+const selfUser = (u) => u && { ...publicUser(u), phone: u.phone || null, email: u.email || null };
 
 function bearer(req) {
   const auth = req.headers.get("authorization") || "";
@@ -141,7 +142,28 @@ const route = (method, pattern, handler) => {
 // 2) POST /api/auth/verify { phone, code }  -> conta existente: { token, user }
 //                                            -> número novo: { signupTicket }
 // 3) POST /api/users { signupTicket, name, handle } -> cria a conta: { token, user }
-route("GET", "/api/auth/channels", async (req, env) => json(availableChannels(env)));
+// Formas de login disponíveis neste servidor.
+route("GET", "/api/auth/channels", async (req, env) =>
+  json({ ...availableChannels(env), googleClientId: env.GOOGLE_CLIENT_ID || null }));
+
+// ---- Login com Google ----
+// POST /api/auth/google { credential } -> conta existente: { token, user }
+//                                      -> conta nova: { signupTicket, suggested: { name, handle, avatar } }
+route("POST", "/api/auth/google", async (req, env) => {
+  const g = await verifyGoogleIdToken(env, (await body(req)).credential);
+  const user = await env.DB.prepare("SELECT * FROM users WHERE google_sub = ?").bind(g.sub).first();
+  if (user) return json({ token: await createSession(env, user.id), user: selfUser(user) });
+  const ticket = randomToken();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM pending_signups WHERE expires_at < ?").bind(Date.now()),
+    env.DB.prepare(`INSERT INTO pending_signups (token_hash, provider, subject, email, name, picture, expires_at)
+        VALUES (?, 'google', ?, ?, ?, ?, ?)`)
+      .bind(await sha256(ticket), g.sub, g.email, g.name, g.picture, Date.now() + 15 * MIN),
+  ]);
+  const base = (g.email || g.name || "").split("@")[0].normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9_.]/g, "").slice(0, 20);
+  return json({ signupTicket: ticket, suggested: { name: g.name.slice(0, 40), handle: base.length >= 2 ? base : "", avatar: g.picture } });
+});
 
 route("POST", "/api/auth/send", async (req, env) => {
   const b = await body(req);
@@ -182,23 +204,39 @@ route("DELETE", "/api/auth/sessions", async (req, env) => {
 route("POST", "/api/users", async (req, env) => {
   const b = await body(req);
   const ticketHash = await sha256(String(b.signupTicket || ""));
-  const ticket = await env.DB.prepare("SELECT phone FROM signup_tickets WHERE token_hash = ? AND expires_at > ?")
-    .bind(ticketHash, Date.now()).first();
-  if (!ticket) throw new HttpError(401, "Confirme seu telefone de novo para criar a conta.");
+  const now = Date.now();
+  // O ticket vem do login por telefone ou do login com Google.
+  const phoneTicket = await env.DB.prepare("SELECT phone FROM signup_tickets WHERE token_hash = ? AND expires_at > ?")
+    .bind(ticketHash, now).first();
+  const googleTicket = phoneTicket ? null : await env.DB
+    .prepare("SELECT subject, email, picture FROM pending_signups WHERE token_hash = ? AND provider = 'google' AND expires_at > ?")
+    .bind(ticketHash, now).first();
+  if (!phoneTicket && !googleTicket) throw new HttpError(401, "Entre de novo para criar a conta.");
   const name = str(b.name, "nome", { min: 1, max: 40 });
   const handle = normalizeHandle(b.handle);
-  const user = { id: uid("u"), name, handle, avatar_url: null, phone: ticket.phone };
+  const user = {
+    id: uid("u"), name, handle,
+    avatar_url: googleTicket?.picture || null,
+    phone: phoneTicket?.phone || null,
+    email: googleTicket?.email || null,
+    google_sub: googleTicket?.subject || null,
+  };
   try {
     // users.token_hash é legado (antes do login por telefone); guardamos um valor aleatório.
-    await env.DB.prepare("INSERT INTO users (id, name, handle, avatar_url, token_hash, phone, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?)")
-      .bind(user.id, name, handle, "legacy-" + randomToken(), user.phone, Date.now()).run();
+    await env.DB.prepare(`INSERT INTO users (id, name, handle, avatar_url, token_hash, phone, email, google_sub, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(user.id, name, handle, user.avatar_url, "legacy-" + randomToken(), user.phone, user.email, user.google_sub, now).run();
   } catch (e) {
     const m = String(e.message);
     if (m.includes("users.handle")) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
+    if (m.includes("google")) throw new HttpError(409, "Esta conta Google já tem cadastro. Entre com ela.");
     if (m.includes("phone")) throw new HttpError(409, "Este telefone já tem conta. Entre com ele.");
     throw e;
   }
-  await env.DB.prepare("DELETE FROM signup_tickets WHERE token_hash = ?").bind(ticketHash).run();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM signup_tickets WHERE token_hash = ?").bind(ticketHash),
+    env.DB.prepare("DELETE FROM pending_signups WHERE token_hash = ?").bind(ticketHash),
+  ]);
   await notify(env, user.id, null, `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`);
   return json({ user: selfUser(user), token: await createSession(env, user.id) }, 201);
 });

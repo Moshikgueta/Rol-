@@ -683,7 +683,7 @@
     setAvatar($("#member-avatar"), u);
     $("#member-name").textContent = u.name;
     $("#member-handle").textContent = "@" + u.handle;
-    $("#member-phone").textContent = u.phone ? formatPhone(u.phone) : "";
+    $("#member-phone").textContent = u.phone ? formatPhone(u.phone) : (u.email || "");
     syncLiveUI();
     try {
       const s = await api("/me/summary");
@@ -798,10 +798,12 @@
     },
     login: startAuth,
     "auth-back": () => {
-      if (authStep === "phone") back();
-      else setAuthStep("phone");
+      if (authStep === firstAuthStep()) back();
+      else if (authStep === "code") setAuthStep("phone");
+      else setAuthStep(firstAuthStep());
     },
     "auth-change-phone": () => setAuthStep("phone"),
+    "auth-use-phone": () => { setAuthStep("phone"); setTimeout(() => $("#phone-input").focus(), 100); },
   };
 
   document.addEventListener("click", async (e) => {
@@ -932,31 +934,38 @@
       finishAuth(finalUser, `Conta criada! Bem-vindo, @${finalUser.handle}`);
     } catch (err) {
       toast(err.message);
-      if (err.status === 401) setAuthStep("phone");
+      if (err.status === 401) setAuthStep(firstAuthStep());
     }
     btn.disabled = false;
   });
 
   // ---------------- Login por telefone ----------------
-  const auth = { phone: null, ticket: null, resendAt: 0, channel: "sms", channels: { sms: true, whatsapp: false } };
+  const auth = { phone: null, ticket: null, resendAt: 0, channel: "sms", channels: { sms: true, whatsapp: false, googleClientId: null } };
   const CHANNEL_TEXT = { sms: "por SMS", whatsapp: "pelo WhatsApp" };
 
-  // Mostra o botão do WhatsApp só quando o servidor tem o WhatsApp configurado.
+  // Mostra só as formas de login que o servidor tem configuradas.
   api("/auth/channels").then((c) => {
     auth.channels = c;
     $("#phone-submit-wa").classList.toggle("hidden", !c.whatsapp);
+    $("#use-phone-btn").classList.toggle("hidden", !c.sms);
+    $("#login-off").classList.toggle("hidden", !!(c.sms || c.googleClientId));
+    if (c.googleClientId) loadGoogle(c.googleClientId);
+    if (authStep === "phone" && $("#screen-signup").classList.contains("active")) setAuthStep(firstAuthStep());
   }).catch(() => {});
   let authStep = "phone";
 
+  // Sem Google configurado, o login começa direto no celular (como antes).
+  const firstAuthStep = () => (auth.channels.googleClientId || !auth.channels.sms ? "choose" : "phone");
+
   function startAuth() {
     closeDrawer(); closeSheets();
-    setAuthStep("phone");
+    setAuthStep(firstAuthStep());
     show("screen-signup");
-    setTimeout(() => $("#phone-input").focus(), 100);
+    if (authStep === "phone") setTimeout(() => $("#phone-input").focus(), 100);
   }
   function setAuthStep(step) {
     authStep = step;
-    const ids = { phone: "phone-form", code: "code-form", profile: "signup-form" };
+    const ids = { choose: "choose-form", phone: "phone-form", code: "code-form", profile: "signup-form" };
     $$(".auth-step").forEach((f) => f.classList.toggle("active", f.id === ids[step]));
     if (step === "code") { $("#code-input").value = ""; setTimeout(() => $("#code-input").focus(), 100); }
   }
@@ -1064,6 +1073,53 @@
     if (e.target.value.length === 6) verifyCode(); // confirma sozinho ao completar
   });
   $("#code-form").addEventListener("submit", (e) => { e.preventDefault(); verifyCode(); });
+
+  // ---------------- Entrar com Google ----------------
+  // Usa o botão oficial do Google (Google Identity Services). O Google devolve um
+  // "ID token" assinado, que o servidor confere em /api/auth/google.
+  let googleLoaded = false;
+  function loadGoogle(clientId) {
+    if (googleLoaded) return;
+    googleLoaded = true;
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = () => {
+      window.google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential, ux_mode: "popup", context: "signin" });
+      window.google.accounts.id.renderButton($("#google-btn"), {
+        theme: "outline", size: "large", shape: "pill", text: "continue_with", locale: "pt-BR",
+        width: Math.min(320, $("#choose-form").clientWidth || 320),
+      });
+    };
+    s.onerror = () => { googleLoaded = false; toast("Não foi possível carregar o login do Google. Verifique sua internet."); };
+    document.head.appendChild(s);
+  }
+
+  async function onGoogleCredential(resp) {
+    try {
+      const r = await api("/auth/google", { method: "POST", body: { credential: resp.credential } });
+      if (r.token) {
+        state.token = r.token;
+        localStorage.setItem(TOKEN_KEY, r.token);
+        finishAuth(r.user, `Que bom te ver de novo, @${r.user.handle}!`);
+        return;
+      }
+      // Conta nova: nome e foto vêm do Google; a pessoa só confirma o @.
+      auth.ticket = r.signupTicket;
+      const sug = r.suggested || {};
+      signupAvatar = null;
+      $("#signup-name").value = sug.name || "";
+      const h = $("#signup-handle");
+      h.value = sug.handle || "";
+      if (sug.handle) h.dataset.touched = "1";
+      setAvatar($("#signup-avatar"), { name: sug.name || "?", avatar: sug.avatar });
+      if (!$("#screen-signup").classList.contains("active")) show("screen-signup");
+      setAuthStep("profile");
+      setTimeout(() => (sug.handle ? h : $("#signup-name")).focus(), 100);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
 
   function finishAuth(user, message) {
     auth.ticket = null;

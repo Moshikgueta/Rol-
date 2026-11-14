@@ -502,3 +502,5 @@ textarea.input { height: auto; padding: 14px 18px; resize: none; }
 .btn-whatsapp svg { width: 28px; height: 28px; }
 #switch-channel { align-self: center; }
 .demo-note { margin: 0 30px 18px; padding: 10px 14px; border-radius: 14px; background: rgba(0,0,0,.15); font-size: 13px; text-align: center; }
+.google-btn { display: flex; justify-content: center; min-height: 44px; }
+.google-btn:empty { display: none; }

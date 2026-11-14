@@ -9,7 +9,8 @@ App web (mobile-first) com backend na **Cloudflare**:
 | Banco de dados (usuários, posts, curtidas, comentários, amigos, notificações) | D1 (SQLite) |
 | Fotos dos rolês e avatares | R2 |
 | Localização em tempo real (WebSocket) | Durable Objects (`src/live.js`) |
-| Login por celular (código por SMS ou WhatsApp) | Twilio Verify (`src/otp.js`) |
+| Login com Google (grátis) | Google Identity Services (`src/google.js`) |
+| Login por celular (código por SMS ou WhatsApp, pago, opcional) | Twilio Verify (`src/otp.js`) |
 
 ## Versão de demonstração (GitHub Pages)
 
@@ -118,6 +119,17 @@ Depois abra http://localhost:8787. No computador o login roda em **modo de teste
 
    O app fica em `https://role.<sua-conta>.workers.dev`. Um domínio próprio pode ser ligado no painel, em Workers → role → Settings → Domains.
 
+## Entrar com Google (grátis)
+
+1. Abra https://console.cloud.google.com e crie um projeto (por exemplo "Role").
+2. Em **APIs e serviços → Tela de permissão OAuth** (ou **Google Auth Platform → Branding**), preencha o nome do app ("Rolê"), o e-mail de suporte e publique como **Externo**.
+3. Em **APIs e serviços → Credenciais → Criar credenciais → ID do cliente OAuth**:
+   - **Tipo:** Aplicativo da Web
+   - **Origens JavaScript autorizadas:** `https://role.<sua-conta>.workers.dev` e, para testar no computador, `http://localhost:8787`
+4. Copie o **ID do cliente** (termina em `.apps.googleusercontent.com`) e coloque em `wrangler.jsonc`, no campo `"GOOGLE_CLIENT_ID"`. Ele é público e não precisa de segredo.
+
+O botão **Continuar com o Google** só aparece quando o Client ID está preenchido. O servidor confere a assinatura do Google em cada login. Na primeira vez, nome e foto vêm do Google e a pessoa só escolhe o @.
+
 ## Deploy automático pelo GitHub
 
 O workflow `.github/workflows/deploy-cloudflare.yml` publica na Cloudflare a cada atualização da `main`. Para ligar, configure em **Settings → Secrets and variables → Actions → New repository secret**:
@@ -125,13 +137,14 @@ O workflow `.github/workflows/deploy-cloudflare.yml` publica na Cloudflare a cad
 - `CLOUDFLARE_API_TOKEN`: token de API da Cloudflare (Workers Scripts, D1 e Workers R2 Storage com Edit; Account Settings com Read).
 - `CLOUDFLARE_ACCOUNT_ID`: ID da sua conta, que aparece na página inicial do painel da Cloudflare, na barra lateral, em **Account ID**.
 
-Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e confira se o Database ID em `wrangler.jsonc` é o do seu banco. Para criar as tabelas, rode o workflow manualmente em **Actions → Deploy na Cloudflare → Run workflow**, marcando **Aplicar migrations**. Para colocar ou renovar os rolês de exemplo, marque **Carregar dados de exemplo**.
+Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e confira se o Database ID em `wrangler.jsonc` é o do seu banco. A cada deploy, as migrations novas do banco são aplicadas sozinhas. Para colocar ou renovar os rolês de exemplo, marque **Carregar dados de exemplo**.
 
 ## API
 
 | Método | Rota | O que faz |
 | --- | --- | --- |
 | GET | `/api/auth/channels` | Formas de envio disponíveis: `{ sms, whatsapp }`. |
+| POST | `/api/auth/google` | Confere o login com Google (`credential`). Conta existente: devolve `token`; conta nova: devolve `signupTicket` e sugestões de nome, @ e foto. |
 | POST | `/api/auth/send` | Envia o código (`phone`, `channel`: `"sms"` ou `"whatsapp"`). |
 | POST | `/api/auth/verify` | Confere o código (`phone`, `code`). Conta existente: devolve `token`; número novo: devolve `signupTicket`. |
 | POST | `/api/users` | Cria a conta depois de verificar o número (`signupTicket`, `name`, `handle`). Devolve `token`. |
