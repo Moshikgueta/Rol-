@@ -125,7 +125,7 @@ O workflow `.github/workflows/deploy-cloudflare.yml` publica na Cloudflare a cad
 - `CLOUDFLARE_API_TOKEN`: token de API da Cloudflare (Workers Scripts, D1 e Workers R2 Storage com Edit; Account Settings com Read).
 - `CLOUDFLARE_ACCOUNT_ID`: ID da sua conta, que aparece na página inicial do painel da Cloudflare, na barra lateral, em **Account ID**.
 
-Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e troque `COLE_AQUI_O_ID_DO_D1` em `wrangler.jsonc` pelo Database ID. Para criar as tabelas, rode o workflow manualmente em **Actions → Deploy na Cloudflare → Run workflow**, marcando **Aplicar migrations**.
+Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e confira se o Database ID em `wrangler.jsonc` é o do seu banco. Para criar as tabelas, rode o workflow manualmente em **Actions → Deploy na Cloudflare → Run workflow**, marcando **Aplicar migrations**.
 
 ## API
 
