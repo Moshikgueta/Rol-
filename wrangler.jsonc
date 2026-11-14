@@ -5,7 +5,7 @@
   "compatibility_date": "2026-11-01",
   "assets": { "directory": "./public", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
   "d1_databases": [
-    { "binding": "DB", "database_name": "role-db", "database_id": "COLE_AQUI_O_ID_DO_D1", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "role-db", "database_id": "37feb148-534d-4d36-92df-b010a9bdd016", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "role-media" }],
   "durable_objects": { "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }] },
