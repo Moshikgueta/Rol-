@@ -118,6 +118,15 @@ Depois abra http://localhost:8787. No computador o login roda em **modo de teste
 
    O app fica em `https://role.<sua-conta>.workers.dev`. Um domínio próprio pode ser ligado no painel, em Workers → role → Settings → Domains.
 
+## Deploy automático pelo GitHub
+
+O workflow `.github/workflows/deploy-cloudflare.yml` publica na Cloudflare a cada atualização da `main`. Para ligar, configure em **Settings → Secrets and variables → Actions → New repository secret**:
+
+- `CLOUDFLARE_API_TOKEN`: token de API da Cloudflare (Workers Scripts, D1 e Workers R2 Storage com Edit; Account Settings com Read).
+- `CLOUDFLARE_ACCOUNT_ID`: ID da sua conta, que aparece na página inicial do painel da Cloudflare, na barra lateral, em **Account ID**.
+
+Antes do primeiro deploy, crie o banco `role-db` e o bucket `role-media`, e troque `COLE_AQUI_O_ID_DO_D1` em `wrangler.jsonc` pelo Database ID. Para criar as tabelas, rode o workflow manualmente em **Actions → Deploy na Cloudflare → Run workflow**, marcando **Aplicar migrations**.
+
 ## API
 
 | Método | Rota | O que faz |
