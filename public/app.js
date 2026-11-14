@@ -193,7 +193,7 @@
     if (state.user) return true;
     pendingAfterSignup = then || null;
     closeSheets(); closeDrawer();
-    toast("Entre com seu celular para continuar.");
+    toast("Entre ou crie sua conta para continuar.");
     startAuth();
     return false;
   }
@@ -684,6 +684,7 @@
     $("#member-name").textContent = u.name;
     $("#member-handle").textContent = "@" + u.handle;
     $("#member-phone").textContent = u.phone ? formatPhone(u.phone) : (u.email || "");
+    $("#change-password-btn").textContent = u.hasPassword ? "Trocar senha" : "Criar senha";
     syncLiveUI();
     try {
       const s = await api("/me/summary");
@@ -748,7 +749,7 @@
   // ---------------- Eventos ----------------
   const actions = {
     discover: () => show("screen-map"),
-    signup: startAuth,
+    signup: () => startAuth("register"),
     back,
     "back-map": () => show("screen-map"),
     menu: openDrawer,
@@ -796,12 +797,15 @@
       if (!confirm("Sair da conta em todos os aparelhos?")) return;
       await signOut("/auth/sessions");
     },
-    login: startAuth,
+    login: () => startAuth("login"),
     "auth-back": () => {
-      if (authStep === firstAuthStep()) back();
+      if (authStep === "choose") back();
       else if (authStep === "code") setAuthStep("phone");
-      else setAuthStep(firstAuthStep());
+      else setAuthStep("choose");
     },
+    "auth-register": () => openRegister(),
+    "auth-login": () => { setAuthStep("login"); setTimeout(() => $("#login-handle").focus(), 100); },
+    "change-password": openPasswordSheet,
     "auth-change-phone": () => setAuthStep("phone"),
     "auth-use-phone": () => { setAuthStep("phone"); setTimeout(() => $("#phone-input").focus(), 100); },
   };
@@ -918,10 +922,10 @@
     const btn = $("#signup-form button[type=submit]");
     btn.disabled = true;
     try {
-      const { user, token } = await api("/users", {
-        method: "POST",
-        body: { signupTicket: auth.ticket, name: $("#signup-name").value.trim(), handle: normalizeHandle($("#signup-handle").value) },
-      });
+      const profile = { name: $("#signup-name").value.trim(), handle: normalizeHandle($("#signup-handle").value) };
+      const { user, token } = auth.ticket
+        ? await api("/users", { method: "POST", body: { signupTicket: auth.ticket, ...profile } })
+        : await api("/auth/register", { method: "POST", body: { ...profile, password: $("#signup-password").value } });
       state.token = token;
       localStorage.setItem(TOKEN_KEY, token);
       let finalUser = user;
@@ -934,7 +938,7 @@
       finishAuth(finalUser, `Conta criada! Bem-vindo, @${finalUser.handle}`);
     } catch (err) {
       toast(err.message);
-      if (err.status === 401) setAuthStep(firstAuthStep());
+      if (err.status === 401) setAuthStep("choose");
     }
     btn.disabled = false;
   });
@@ -948,24 +952,39 @@
     auth.channels = c;
     $("#phone-submit-wa").classList.toggle("hidden", !c.whatsapp);
     $("#use-phone-btn").classList.toggle("hidden", !c.sms);
-    $("#login-off").classList.toggle("hidden", !!(c.sms || c.googleClientId));
+    $("#auth-or").classList.toggle("hidden", !(c.sms || c.googleClientId));
     if (c.googleClientId) loadGoogle(c.googleClientId);
-    if (authStep === "phone" && $("#screen-signup").classList.contains("active")) setAuthStep(firstAuthStep());
   }).catch(() => {});
-  let authStep = "phone";
+  let authStep = "choose";
 
-  // Sem Google configurado, o login começa direto no celular (como antes).
-  const firstAuthStep = () => (auth.channels.googleClientId || !auth.channels.sms ? "choose" : "phone");
-
-  function startAuth() {
+  // Começa em "choose" (Criar conta / Já tenho conta), ou direto num dos dois.
+  function startAuth(step = "choose") {
     closeDrawer(); closeSheets();
-    setAuthStep(firstAuthStep());
     show("screen-signup");
-    if (authStep === "phone") setTimeout(() => $("#phone-input").focus(), 100);
+    if (step === "register") openRegister();
+    else if (step === "login") { setAuthStep("login"); setTimeout(() => $("#login-handle").focus(), 100); }
+    else setAuthStep("choose");
   }
+
+  // Cadastro com @ e senha: o mesmo formulário de perfil, com o campo de senha.
+  function openRegister() {
+    auth.ticket = null;
+    signupAvatar = null;
+    $("#signup-form").reset();
+    delete $("#signup-handle").dataset.touched;
+    $("#signup-avatar").innerHTML = '<svg><use href="#i-camera"/></svg>';
+    setAuthStep("profile");
+    setTimeout(() => $("#signup-name").focus(), 100);
+  }
+
   function setAuthStep(step) {
     authStep = step;
-    const ids = { choose: "choose-form", phone: "phone-form", code: "code-form", profile: "signup-form" };
+    // Senha só é pedida no cadastro direto (sem ticket do Google/celular).
+    const needsPw = step === "profile" && !auth.ticket;
+    const pw = $("#signup-password");
+    pw.classList.toggle("hidden", !needsPw);
+    pw.required = needsPw;
+    const ids = { choose: "choose-form", login: "login-form", phone: "phone-form", code: "code-form", profile: "signup-form" };
     $$(".auth-step").forEach((f) => f.classList.toggle("active", f.id === ids[step]));
     if (step === "code") { $("#code-input").value = ""; setTimeout(() => $("#code-input").focus(), 100); }
   }
@@ -1073,6 +1092,51 @@
     if (e.target.value.length === 6) verifyCode(); // confirma sozinho ao completar
   });
   $("#code-form").addEventListener("submit", (e) => { e.preventDefault(); verifyCode(); });
+
+  // ---------------- Entrar com @ e senha ----------------
+  $("#login-handle").addEventListener("input", (e) => { e.target.value = normalizeHandle(e.target.value); });
+  $("#login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#login-submit");
+    btn.disabled = true;
+    btn.textContent = "Entrando...";
+    try {
+      const r = await api("/auth/login", {
+        method: "POST",
+        body: { handle: normalizeHandle($("#login-handle").value), password: $("#login-password").value },
+      });
+      state.token = r.token;
+      localStorage.setItem(TOKEN_KEY, r.token);
+      $("#login-password").value = "";
+      finishAuth(r.user, `Que bom te ver de novo, @${r.user.handle}!`);
+    } catch (err) {
+      toast(err.message);
+      $("#login-password").select();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Entrar";
+    }
+  });
+
+  function openPasswordSheet() {
+    if (!state.user) return;
+    const has = !!state.user.hasPassword;
+    $("#password-title").textContent = has ? "Trocar senha" : "Criar senha";
+    $("#pw-current").classList.toggle("hidden", !has);
+    $("#pw-current").required = has;
+    $("#password-form").reset();
+    openSheet("sheet-password");
+  }
+  $("#password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api("/me/password", { method: "POST", body: { current: $("#pw-current").value, password: $("#pw-new").value } });
+      state.user.hasPassword = true;
+      closeSheets();
+      renderMember();
+      toast("Senha salva. Agora você também entra com @ e senha.");
+    } catch (err) { toast(err.message); }
+  });
 
   // ---------------- Entrar com Google ----------------
   // Usa o botão oficial do Google (Google Identity Services). O Google devolve um

@@ -3,6 +3,7 @@ export { LiveHub } from "./live.js";
 import { HttpError, json, sha256, randomToken } from "./util.js";
 import { normalizePhone, sendCode, checkCode, availableChannels } from "./otp.js";
 import { verifyGoogleIdToken } from "./google.js";
+import { validatePassword, hashPassword, verifyPassword, checkAttempts, recordAttempt } from "./password.js";
 
 const MIN = 60 * 1000;
 const DURATIONS = [60, 180, 360];
@@ -41,7 +42,7 @@ function ownMediaUrl(url, user, { optional = false } = {}) {
 
 const publicUser = (u) => u && { id: u.id, name: u.name, handle: u.handle, avatar: u.avatar_url };
 // Dados que só a própria pessoa vê
-const selfUser = (u) => u && { ...publicUser(u), phone: u.phone || null, email: u.email || null };
+const selfUser = (u) => u && { ...publicUser(u), phone: u.phone || null, email: u.email || null, hasPassword: !!u.password_hash };
 
 function bearer(req) {
   const auth = req.headers.get("authorization") || "";
@@ -144,7 +145,58 @@ const route = (method, pattern, handler) => {
 // 3) POST /api/users { signupTicket, name, handle } -> cria a conta: { token, user }
 // Formas de login disponíveis neste servidor.
 route("GET", "/api/auth/channels", async (req, env) =>
-  json({ ...availableChannels(env), googleClientId: env.GOOGLE_CLIENT_ID || null }));
+  json({ ...availableChannels(env), password: true, googleClientId: env.GOOGLE_CLIENT_ID || null }));
+
+// ---- Login com @ e senha (grátis, sempre disponível) ----
+// POST /api/auth/register { name, handle, password } -> { token, user }
+// POST /api/auth/login    { handle, password }       -> { token, user }
+route("POST", "/api/auth/register", async (req, env) => {
+  const b = await body(req);
+  const ip = req.headers.get("cf-connecting-ip");
+  const name = str(b.name, "nome", { min: 1, max: 40 });
+  const handle = normalizeHandle(b.handle);
+  const password = validatePassword(b.password);
+  await checkAttempts(env, "register", { ip });
+  const user = { id: uid("u"), name, handle, avatar_url: null, phone: null, email: null, password_hash: await hashPassword(password) };
+  try {
+    await env.DB.prepare(`INSERT INTO users (id, name, handle, avatar_url, token_hash, password_hash, created_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?)`)
+      .bind(user.id, name, handle, "legacy-" + randomToken(), user.password_hash, Date.now()).run();
+  } catch (e) {
+    if (String(e.message).includes("users.handle")) throw new HttpError(409, `O @${handle} já está em uso. Escolha outro.`);
+    throw e;
+  }
+  await recordAttempt(env, "register", { ip });
+  await notify(env, user.id, null, `Bem-vindo ao Rolê, ${name.split(" ")[0]}! Faça seu primeiro check-in.`);
+  return json({ user: selfUser(user), token: await createSession(env, user.id) }, 201);
+});
+
+route("POST", "/api/auth/login", async (req, env) => {
+  const b = await body(req);
+  const ip = req.headers.get("cf-connecting-ip");
+  const handle = String(b.handle || "").toLowerCase().replace(/^@/, "").trim();
+  if (!handle || typeof b.password !== "string" || !b.password) throw new HttpError(400, "Digite seu @ e sua senha.");
+  await checkAttempts(env, "login_fail", { handle, ip });
+  const user = await env.DB.prepare("SELECT * FROM users WHERE handle = ?").bind(handle).first();
+  // Mesma mensagem para @ inexistente e senha errada, para não revelar quais @ existem.
+  if (!user || !user.password_hash || !(await verifyPassword(b.password, user.password_hash))) {
+    await recordAttempt(env, "login_fail", { handle, ip });
+    throw new HttpError(401, "@ ou senha incorretos.");
+  }
+  return json({ token: await createSession(env, user.id), user: selfUser(user) });
+});
+
+// Trocar ou criar senha (também serve para quem entrou com Google/celular).
+route("POST", "/api/me/password", async (req, env) => {
+  const me = await authUser(req, env);
+  const b = await body(req);
+  if (me.password_hash && !(await verifyPassword(String(b.current || ""), me.password_hash))) {
+    throw new HttpError(401, "A senha atual está incorreta.");
+  }
+  const password = validatePassword(b.password);
+  await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(await hashPassword(password), me.id).run();
+  return json({ ok: true });
+});
 
 // ---- Login com Google ----
 // POST /api/auth/google { credential } -> conta existente: { token, user }

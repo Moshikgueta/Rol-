@@ -36,11 +36,23 @@
     <!-- Passo 0: escolher como entrar -->
     <div id="choose-form" class="signup-form auth-step">
       <h3 class="auth-title">Entre no Rolê</h3>
-      <p class="small center">Na primeira vez, você só escolhe o seu @.</p>
+      <p class="small center">É grátis e leva menos de um minuto.</p>
+      <button type="button" class="btn btn-white" data-action="auth-register">Criar conta</button>
+      <button type="button" class="btn btn-dark" data-action="auth-login">Já tenho conta</button>
+      <p id="auth-or" class="small center hidden">ou</p>
       <div id="google-btn" class="google-btn" aria-label="Entrar com Google"></div>
-      <button type="button" class="btn btn-white hidden" id="use-phone-btn" data-action="auth-use-phone">Entrar com celular</button>
-      <p id="login-off" class="small center hidden">O login ainda não está disponível. Você já pode explorar o mapa em Descubra.</p>
+      <button type="button" class="link-light hidden" id="use-phone-btn" data-action="auth-use-phone">Entrar com celular</button>
     </div>
+
+    <!-- Entrar com @ e senha -->
+    <form id="login-form" class="signup-form auth-step">
+      <h3 class="auth-title">Entrar</h3>
+      <div class="input-prefix"><span>@</span><input id="login-handle" class="input" type="text" required maxlength="20" placeholder="usuario" autocapitalize="off" autocomplete="username" aria-label="Seu @" /></div>
+      <input id="login-password" class="input" type="password" required autocomplete="current-password" placeholder="Senha" aria-label="Senha" />
+      <button type="submit" class="btn btn-white" id="login-submit">Entrar</button>
+      <p class="tiny center">Esqueceu a senha? Por enquanto não dá para recuperar pelo app. Guarde sua senha num lugar seguro.</p>
+      <button type="button" class="link-light" data-action="auth-register">Ainda não tenho conta</button>
+    </form>
 
     <!-- Passo 1: telefone -->
     <form id="phone-form" class="signup-form auth-step active">
@@ -82,7 +94,8 @@
         <span class="small">Adicionar foto</span>
       </label>
       <input id="signup-name" class="input" type="text" required maxlength="40" placeholder="Seu nome" autocomplete="name" />
-      <div class="input-prefix"><span>@</span><input id="signup-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]{2,20}" placeholder="usuario" autocapitalize="off" /></div>
+      <div class="input-prefix"><span>@</span><input id="signup-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]{2,20}" placeholder="usuario" autocapitalize="off" autocomplete="username" /></div>
+      <input id="signup-password" class="input hidden" type="password" minlength="8" maxlength="200" autocomplete="new-password" placeholder="Crie uma senha (mín. 8 caracteres)" aria-label="Senha" />
       <button type="submit" class="btn btn-white">Criar Nova Conta</button>
     </form>
   </section>
@@ -192,6 +205,7 @@
       <h4 class="section-title">Conta</h4>
       <div class="card menu">
         <button data-action="edit-profile">Editar perfil</button>
+        <button data-action="change-password" id="change-password-btn">Trocar senha</button>
         <button data-action="notifications">Notificações</button>
         <button data-action="logout" class="danger">Sair da conta</button>
         <button data-action="logout-all" class="danger">Sair de todos os aparelhos</button>
@@ -337,6 +351,17 @@
       <input id="profile-name" class="input" type="text" required maxlength="40" />
       <div class="input-prefix"><span>@</span><input id="profile-handle" class="input" type="text" required maxlength="20" pattern="[a-z0-9_.]+" /></div>
       <button type="submit" class="btn btn-yellow">Salvar</button>
+    </form>
+  </div>
+
+  <!-- Trocar / criar senha -->
+  <div id="sheet-password" class="sheet">
+    <div class="grabber"></div>
+    <h3 id="password-title">Trocar senha</h3>
+    <form id="password-form" class="form">
+      <input id="pw-current" class="input" type="password" autocomplete="current-password" placeholder="Senha atual" aria-label="Senha atual" />
+      <input id="pw-new" class="input" type="password" required minlength="8" maxlength="200" autocomplete="new-password" placeholder="Nova senha (mín. 8 caracteres)" aria-label="Nova senha" />
+      <button type="submit" class="btn btn-yellow">Salvar senha</button>
     </form>
   </div>
 
