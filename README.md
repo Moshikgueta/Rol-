@@ -25,7 +25,7 @@ Para ativar o GitHub Pages pela primeira vez: no reposit√≥rio, abra **Settings ‚
 
 ## Rodar no computador
 
-Requer Node.js 18 ou mais novo.
+Requer Node.js 22.12 ou mais novo.
 
 ```bash
 npm install
