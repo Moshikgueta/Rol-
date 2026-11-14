@@ -7,6 +7,7 @@
 #
 # Para criar ou atualizar as tabelas do banco D1, rode manualmente em
 # Actions → "Deploy na Cloudflare" → Run workflow, marcando "Aplicar migrations".
+# Para colocar (ou renovar os horários dos) rolês de exemplo, marque "Carregar dados de exemplo".
 name: Deploy na Cloudflare
 
 on:
@@ -16,6 +17,10 @@ on:
     inputs:
       migrate:
         description: "Aplicar migrations no banco D1 antes do deploy"
+        type: boolean
+        default: false
+      seed:
+        description: "Carregar/renovar os rolês de exemplo (seed/seed.sql)"
         type: boolean
         default: false
 
@@ -64,6 +69,10 @@ jobs:
       - name: Aplicar migrations do D1
         if: steps.check.outputs.ready == 'true' && inputs.migrate
         run: npx wrangler d1 migrations apply role-db --remote
+
+      - name: Carregar dados de exemplo
+        if: steps.check.outputs.ready == 'true' && inputs.seed
+        run: npx wrangler d1 execute role-db --remote --file=seed/seed.sql
 
       - name: Publicar
         if: steps.check.outputs.ready == 'true'
